@@ -1,15 +1,8 @@
 ---
 layout: page
-title: About
+title: About me
 permalink: /about/
 ---
-
-Some information about you!
-
-### More Information
-
-A place to include any other types of information that you'd like to include about yourself.
-
-### Contact me
-
-[email@domain.com](mailto:email@domain.com)
+* [Stack overflow developer story](http://stackoverflow.com/story/rjmunro)
+* [Twitter](http://twitter.com/rjmunro)
+* [GitHub](http://github.com/rjmunro)
