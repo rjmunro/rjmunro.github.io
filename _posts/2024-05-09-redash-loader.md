@@ -5,7 +5,7 @@ title: Redash Loader
 Redash is a versatile data analytics tool that connects to various data sources, enabling users to
 query them and create dashboards. With SQL knowledge, it offers flexibility for ad-hoc queries.
 However, as a developer using it for larger projects, I found Redash challenging to use out of the
-box.
+box. Redash Loader is a solution to one of the biggest problems that I encountered.
 
 All query and dashboard configurations are stored in the Redash database. Besides taking a complete
 database backup, there's no official method for saving them. This limitation means you can't, for
