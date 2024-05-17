@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Redash Loader
+title: Keeping track of Redash queries and dashboards in git
 ---
 Redash is a versatile data analytics tool that connects to various data sources, enabling users to
 query them and create dashboards. With SQL knowledge, it offers flexibility for ad-hoc queries.
