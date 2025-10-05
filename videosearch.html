@@ -4,23 +4,26 @@
 <meta charset="UTF-8">
 <title>Video Event Binary Search Canvas</title>
 <style>
-  html, body { margin:0; padding:0; width:100%; height:100%; display:flex; justify-content:center; align-items:center; font-family:sans-serif; overflow:hidden; }
+  html, body { margin:0; padding:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; font-family:sans-serif; overflow:hidden; }
+  #canvasContainer { flex:1; display:flex; justify-content:center; align-items:center; width:100%; }
   canvas { border:1px solid #ccc; background:#eee; cursor:pointer; }
-  #controls { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:none; }
+  #controls { display:none; margin:10px; }
   #controls button { margin:5px; font-size:16px; padding:8px 16px; }
   #saveBtn { margin-top:10px; display:none; }
   #tooltip { position:absolute; padding:4px 6px; background: rgba(0,0,0,0.7); color:#fff; font-size:12px; border-radius:3px; pointer-events:none; display:none; }
 </style>
 </head>
 <body>
+<div id="canvasContainer">
 <canvas id="canvas"></canvas>
+<div id="tooltip"></div>
+</div>
 <div id="controls">
   <p>Has the event occurred?</p>
   <button id="yesBtn">Yes</button>
   <button id="noBtn">No</button>
   <button id="saveBtn">Save Timestamp</button>
 </div>
-<div id="tooltip"></div>
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -33,15 +36,27 @@ const tooltip = document.getElementById('tooltip');
 let video = document.createElement('video');
 video.crossOrigin = 'anonymous';
 video.muted = true;
+video.playsInline = true;
 
 let markers = [];
 let start = 0, end = 0, current = 0;
 let timelineHeight = 50;
 
+let videoAspect = 16/9;
+
 function resizeCanvas(){
-    const minDim = Math.min(window.innerWidth, window.innerHeight);
-    canvas.width = minDim;
-    canvas.height = minDim;
+    const containerWidth = window.innerWidth;
+    const containerHeight = window.innerHeight - controls.offsetHeight;
+    const maxWidth = containerWidth * 0.95;
+    const maxHeight = containerHeight * 0.95;
+
+    if(maxWidth/maxHeight > videoAspect){
+        canvas.height = maxHeight;
+        canvas.width = maxHeight * videoAspect;
+    } else {
+        canvas.width = maxWidth;
+        canvas.height = maxWidth / videoAspect;
+    }
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -59,7 +74,10 @@ function drawTimeline(){
 function drawVideoFrame(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     if(video.readyState >= 2){
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height - timelineHeight);
+        const videoHeight = canvas.height - timelineHeight;
+        const videoWidth = videoHeight * video.videoWidth / video.videoHeight;
+        const offsetX = (canvas.width - videoWidth)/2;
+        ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
     }
     drawTimeline();
     requestAnimationFrame(drawVideoFrame);
@@ -97,6 +115,8 @@ function fileDropSetup(){
             const url = URL.createObjectURL(file);
             video.src = url;
             video.addEventListener('loadedmetadata',()=>{
+                videoAspect = video.videoWidth / video.videoHeight;
+                resizeCanvas();
                 start=0; end=video.duration;
                 current=(start+end)/2;
                 video.currentTime=current;
