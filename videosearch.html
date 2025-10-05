@@ -63,11 +63,38 @@ resizeCanvas();
 function drawTimeline(){
     ctx.fillStyle = '#ccc';
     ctx.fillRect(0, canvas.height - timelineHeight, canvas.width, timelineHeight);
+
+    // Draw markers
     markers.forEach(m => {
         ctx.fillStyle = m.color;
         const x = m.time/video.duration * canvas.width;
         ctx.fillRect(x-3, canvas.height - timelineHeight, 6, timelineHeight);
     });
+
+    // Draw current playhead with upward triangle
+    if(video.duration > 0){
+        const x = video.currentTime / video.duration * canvas.width;
+        const yBottom = canvas.height;
+        const yTop = canvas.height - timelineHeight;
+        const triangleHeight = timelineHeight / 3;
+
+        // Vertical line
+        ctx.beginPath();
+        ctx.moveTo(x, yTop);
+        ctx.lineTo(x, yBottom - triangleHeight);
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Upward triangle at bottom third
+        ctx.beginPath();
+        ctx.moveTo(x, yBottom - triangleHeight);
+        ctx.lineTo(x - 6, yBottom);
+        ctx.lineTo(x + 6, yBottom);
+        ctx.closePath();
+        ctx.fillStyle = 'black';
+        ctx.fill();
+    }
 }
 
 function drawVideoFrame(){
@@ -83,7 +110,6 @@ function drawVideoFrame(){
 }
 
 function addMarker(time, color){
-    // remove nearby markers of opposite type if contradicting
     markers = markers.filter(m => !(Math.abs(m.time - time) < 0.1 && m.color !== color));
     markers.push({time,color});
     markers.sort((a,b)=>a.time-b.time);
@@ -121,14 +147,11 @@ function handleClick(event){
     video.currentTime = clickTime;
     current = clickTime;
 
-    // Determine if click is in known or unknown region
     const {lastYes, firstNo} = getLastMarkers();
     if(clickTime > lastYes && clickTime < firstNo){
-        // unknown region: continue binary search from this point
         video.play();
         setTimeout(()=>video.pause(),200);
     } else {
-        // click agrees with existing info: return to mid-point
         const mid = lastYes + (firstNo - lastYes) / 2;
         current = mid;
         video.currentTime = current;
