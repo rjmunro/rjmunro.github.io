@@ -122,11 +122,19 @@ function getLastMarkers(){
 }
 
 function binaryStep(answer){
-    addMarker(current, answer==='yes'?'green':'red');
+    // Corrected logic: yes -> green -> go backwards, no -> red -> go forwards
+    addMarker(current, answer==='yes' ? 'green' : 'red');
+
     const {lastYes, firstNo} = getLastMarkers();
-    start = lastYes;
-    end = firstNo;
+
+    if(answer === 'yes') {
+        end = current;
+    } else {
+        start = current;
+    }
+
     current = start + (end - start) / 2;
+
     if(Math.abs(end - start) < 0.05){
         alert('Event found at: '+current.toFixed(2)+' seconds');
         saveBtn.style.display='inline';
