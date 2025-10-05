@@ -63,8 +63,8 @@
     border: none;
     font-weight: bold;
   }
-  #yesBtn { background-color: #4CAF50; color: white; } /* Green for 'Yes' */
-  #noBtn { background-color: #f44336; color: white; } /* Red for 'No' */
+  #yesBtn { background-color: #4CAF50; color: white; } /* Green for 'Yes' (Upper Bound) */
+  #noBtn { background-color: #f44336; color: white; } /* Red for 'No' (Lower Bound) */
   #saveBtn { margin-top:10px; display:none; background-color: #00bcd4; color: white; } /* Cyan for 'Save' */
 
   #yesBtn:hover { background-color: #45a049; }
@@ -92,10 +92,11 @@
   <div id="tooltip"></div>
 </div>
 <div id="controls">
-  <p>Has the event you are searching for occurred BEFORE or AT this frame?</p>
+  <!-- Clarified instruction to reflect that 'Yes' sets the upper bound (earlier time) and 'No' sets the lower bound (later time) -->
+  <p>Has the event you are searching for occurred **BEFORE or AT** this frame?</p>
   <div id="messageBox">Drag and drop a video file here to begin.</div>
-  <button id="yesBtn">Yes (Go Left)</button>
-  <button id="noBtn">No (Go Right)</button>
+  <button id="yesBtn">Yes (Go Backwards)</button>
+  <button id="noBtn">No (Go Forwards)</button>
   <button id="saveBtn">Save Timestamp</button>
 </div>
 <script>
@@ -107,23 +108,53 @@ const yesBtn = document.getElementById('yesBtn');
 const noBtn = document.getElementById('noBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
-const messageBox = document.getElementById('messageBox'); // Added message box
+const messageBox = document.getElementById('messageBox');
 
 // --- Video Element Setup (Created in JS to avoid initial DOM clutter) ---
 let video = document.createElement('video');
 video.crossOrigin = 'anonymous'; // Important for canvas drawing (prevents tainting)
-video.muted = true;             // Required for mobile autoplay compatibility
-video.playsInline = true;       // Required for mobile autoplay compatibility
+video.muted = true;
+video.playsInline = true;
 video.preload = 'auto';
 video.style.display = 'none';
 
 // --- State Variables ---
 let markers = [];         // Stores {time, color} for 'Yes' (green) and 'No' (red) responses
 let start = 0, end = 0;   // Current search range bounds (start/end time in seconds)
-let current = 0;          // The current timestamp being displayed (midpoint of the search range)
-let timelineHeight = 50;  // Fixed height for the timeline visualization at the bottom of the canvas
+let current = 0;          // The current timestamp being displayed
+let timelineHeight = 50;  // Fixed height for the timeline visualization
 let videoAspect = 16/9;   // Default aspect ratio for video resizing
-let readyFrame = false;   // Flag to ensure a frame is ready after seeking (prevents flicker)
+let readyFrame = false;   // Flag to ensure a frame is ready after seeking
+
+// --- Time Formatting Utility ---
+function formatTime(totalSeconds) {
+    if (isNaN(totalSeconds) || totalSeconds < 0) return '00:00.00';
+
+    // Ensure seconds is a non-negative number
+    const secs = Math.floor(Math.max(0, totalSeconds));
+
+    // Calculate fractional part (hundredths of a second)
+    const fractional = Math.floor((totalSeconds - secs) * 100);
+
+    // Calculate hours, minutes, and remaining seconds
+    const hours = Math.floor(secs / 3600);
+    const minutes = Math.floor((secs % 3600) / 60);
+    const remainingSeconds = secs % 60;
+
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(remainingSeconds).padStart(2, '0');
+    const formattedFractional = String(fractional).padStart(2, '0');
+
+    if (hours > 0) {
+        // If duration is an hour or more, include hours
+        const formattedHours = String(hours).padStart(2, '0');
+        return `${formattedHours}:${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
+    } else {
+        // Otherwise, use mm:ss.xx format
+        return `${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
+    }
+}
+
 
 // --- Responsive Canvas Resizing ---
 function resizeCanvas(){
@@ -152,7 +183,15 @@ function drawTimeline(){
     ctx.fillStyle = '#333';
     ctx.fillRect(0, canvas.height - timelineHeight, canvas.width, timelineHeight);
 
-    // 2. Draw all existing markers (red for 'no', green for 'yes')
+    // 2. Draw the current search range (light blue highlight)
+    const startX = start / video.duration * canvas.width;
+    const endX = end / video.duration * canvas.width;
+    const width = endX - startX;
+    ctx.fillStyle = 'rgba(0, 188, 212, 0.2)'; // Cyan with opacity
+    ctx.fillRect(startX, canvas.height - timelineHeight, width, timelineHeight);
+
+
+    // 3. Draw all existing markers (red for 'no', green for 'yes')
     markers.forEach(m => {
         ctx.fillStyle = m.color;
         // Convert time (seconds) to x-coordinate (pixels)
@@ -160,7 +199,7 @@ function drawTimeline(){
         ctx.fillRect(x - 3, canvas.height - timelineHeight, 6, timelineHeight); // 6px wide line
     });
 
-    // 3. Draw the current playback/seek indicator (yellow cursor)
+    // 4. Draw the current playback/seek indicator (yellow cursor)
     if(video.duration > 0){
         // Calculate position of the current time
         const x = video.currentTime / video.duration * canvas.width;
@@ -217,25 +256,27 @@ function drawVideoFrame(){
 
 // --- Marker Management ---
 function addMarker(time, color){
-    // Remove existing markers very close to this time, but only if they are the opposite color.
-    markers = markers.filter(m => !(Math.abs(m.time - time) < 0.1 && m.color !== color));
+    // Markers are only removed in binaryStep for conflict resolution,
+    // here we just ensure a new marker is added and the list is sorted.
     markers.push({time, color});
     markers.sort((a, b) => a.time - b.time); // Keep markers sorted by time
 }
 
-// --- Find Current Search Bounds ---
+// --- Find Current Search Bounds (Corrected Logic) ---
 function getLastMarkers(){
-    // Find the latest 'yes' (green) marker and the earliest 'no' (red) marker.
-    const yesMarkers = markers.filter(m => m.color === 'green');
+    // Red markers ('No') define the event occurred AFTER this time (sets the floor/start bound).
     const noMarkers = markers.filter(m => m.color === 'red');
+    // Green markers ('Yes') define the event occurred at or BEFORE this time (sets the ceiling/end bound).
+    const yesMarkers = markers.filter(m => m.color === 'green');
 
-    // lastYes is the new 'start' boundary (or 0 if none)
-    const lastYes = yesMarkers.length ? yesMarkers[yesMarkers.length - 1].time : 0;
+    // lastNo (latest 'No') is the new 'start' boundary (or 0 if none)
+    const lastNo = noMarkers.length ? noMarkers[noMarkers.length - 1].time : 0;
 
-    // firstNo is the new 'end' boundary (or video duration if none)
-    const firstNo = noMarkers.length ? noMarkers[0].time : video.duration;
+    // firstYes (earliest 'Yes') is the new 'end' boundary (or video duration if none)
+    const firstYes = yesMarkers.length ? yesMarkers[0].time : video.duration;
 
-    return { lastYes, firstNo };
+    // The search space is now correctly defined as [lastNo, firstYes]
+    return { lastNo, firstYes };
 }
 
 // --- Core Binary Search Logic (Triggered by 'Yes'/'No' buttons) ---
@@ -244,12 +285,12 @@ function binaryStep(answer){
     const color = answer === 'yes' ? 'green' : 'red';
 
     // 1. Conflict Resolution: Remove markers that are now invalidated by the new decision.
-    if (color === 'green') {
-        // New 'Yes' (event occurred at/before markTime): Remove any 'No' markers that fall before markTime.
-        markers = markers.filter(m => !(m.color === 'red' && m.time < markTime));
-    } else { // color === 'red'
-        // New 'No' (event occurred after markTime): Remove any 'Yes' markers that fall after markTime.
-        markers = markers.filter(m => !(m.color === 'green' && m.time > markTime));
+    if (color === 'green') { // New 'Yes': event must be AT/BEFORE markTime. This sets the ceiling (end).
+        // Remove any 'No' markers (event is AFTER) that fall at or after markTime, as the new 'Yes' contradicts them.
+        markers = markers.filter(m => !(m.color === 'red' && m.time >= markTime));
+    } else { // color === 'red' - New 'No': event must be AFTER markTime. This sets the floor (start).
+        // Remove any 'Yes' markers (event is AT/BEFORE) that fall at or before markTime, as the new 'No' contradicts them.
+        markers = markers.filter(m => !(m.color === 'green' && m.time <= markTime));
     }
     // Re-sort markers after potential removal
     markers.sort((a, b) => a.time - b.time);
@@ -259,16 +300,16 @@ function binaryStep(answer){
     current = markTime; // Update 'current' to the latest decision point
 
     // 3. Recalculate Boundaries (start/end) based on all valid markers
-    const { lastYes, firstNo } = getLastMarkers();
-    start = lastYes; // New search start
-    end = firstNo;   // New search end
+    const { lastNo, firstYes } = getLastMarkers();
+    start = lastNo; // New search start (defined by the latest 'No' marker)
+    end = firstYes; // New search end (defined by the earliest 'Yes' marker)
 
     // 4. Calculate the new midpoint for the next step
     const nextCurrent = start + (end - start) / 2;
 
     // 5. Check for termination condition
     if(Math.abs(end - start) < 0.05){
-        messageBox.textContent = '✅ Event found at: ' + current.toFixed(2) + ' seconds!';
+        messageBox.textContent = `✅ Event found at: ${formatTime(current)}!`;
         saveBtn.style.display = 'inline';
         video.pause();
         return;
@@ -277,7 +318,7 @@ function binaryStep(answer){
     // 6. Seek to the new midpoint
     seekTo(nextCurrent);
     current = nextCurrent; // Update 'current' for the next decision point
-    messageBox.textContent = `Current search range: ${start.toFixed(2)}s to ${end.toFixed(2)}s.`;
+    messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
     video.pause(); // Always pause after a binary step to allow assessment
 }
 
@@ -348,7 +389,7 @@ function fileDropSetup(){
                 video.pause();
 
                 controls.style.display = 'block'; // Show controls
-                messageBox.textContent = `Current search range: ${start.toFixed(2)}s to ${end.toFixed(2)}s.`;
+                messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
             }, { once: true });
         }
     });
@@ -369,7 +410,7 @@ saveBtn.addEventListener('click', () => {
     const blob = new Blob([timestamp], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'event_timestamp.txt';
+    a.download = `event_timestamp_${formatTime(current).replace(/[:.]/g, '-')}.txt`;
     a.click(); // Programmatically trigger the download
     URL.revokeObjectURL(a.href); // Clean up the URL object
 });
@@ -391,7 +432,7 @@ canvas.addEventListener('mousemove', e => {
       // Offset tooltip position for better visibility
       tooltip.style.left = e.clientX + 10 + 'px';
       tooltip.style.top = e.clientY + 10 + 'px';
-      tooltip.textContent = hoverTime.toFixed(2) + 's';
+      tooltip.textContent = formatTime(hoverTime); // Use new format
     } else {
       tooltip.style.display = 'none';
     }
