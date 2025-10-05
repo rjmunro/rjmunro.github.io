@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Video Event Binary Search Canvas</title>
+<title>Interactive Video Binary Search</title>
 <style>
   html, body { margin:0; padding:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; font-family:sans-serif; overflow:hidden; }
   #canvasContainer { flex:1; display:flex; justify-content:center; align-items:center; width:100%; }
@@ -41,7 +41,6 @@ video.playsInline = true;
 let markers = [];
 let start = 0, end = 0, current = 0;
 let timelineHeight = 50;
-
 let videoAspect = 16/9;
 
 function resizeCanvas(){
@@ -84,25 +83,55 @@ function drawVideoFrame(){
 }
 
 function addMarker(time, color){
+    // remove nearby markers of opposite type if contradicting
+    markers = markers.filter(m => !(Math.abs(m.time - time) < 0.1 && m.color !== color));
     markers.push({time,color});
+    markers.sort((a,b)=>a.time-b.time);
+}
+
+function getLastMarkers(){
+    const yesMarkers = markers.filter(m=>m.color==='green');
+    const noMarkers = markers.filter(m=>m.color==='red');
+    const lastYes = yesMarkers.length ? yesMarkers[yesMarkers.length-1].time : 0;
+    const firstNo = noMarkers.length ? noMarkers[0].time : video.duration;
+    return {lastYes, firstNo};
 }
 
 function binaryStep(answer){
-    if(answer==='yes'){
-        addMarker(current,'green');
-        end=current;
-        current = start + (end-start)/2;
-    } else {
-        addMarker(current,'red');
-        start=current;
-        current = start + (end-start)/2;
-    }
-    video.currentTime=current;
-    video.play();
-    setTimeout(()=>video.pause(),200);
-    if(Math.abs(end-start)<0.05){
+    addMarker(current, answer==='yes'?'green':'red');
+    const {lastYes, firstNo} = getLastMarkers();
+    start = lastYes;
+    end = firstNo;
+    current = start + (end - start) / 2;
+    if(Math.abs(end - start) < 0.05){
         alert('Event found at: '+current.toFixed(2)+' seconds');
         saveBtn.style.display='inline';
+        return;
+    }
+    video.currentTime = current;
+    video.play();
+    setTimeout(()=>video.pause(),200);
+}
+
+function handleClick(event){
+    if(!video.duration) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const clickTime = x / canvas.width * video.duration;
+    video.currentTime = clickTime;
+    current = clickTime;
+
+    // Determine if click is in known or unknown region
+    const {lastYes, firstNo} = getLastMarkers();
+    if(clickTime > lastYes && clickTime < firstNo){
+        // unknown region: continue binary search from this point
+        video.play();
+        setTimeout(()=>video.pause(),200);
+    } else {
+        // click agrees with existing info: return to mid-point
+        const mid = lastYes + (firstNo - lastYes) / 2;
+        current = mid;
+        video.currentTime = current;
     }
 }
 
@@ -117,17 +146,18 @@ function fileDropSetup(){
             video.addEventListener('loadedmetadata',()=>{
                 videoAspect = video.videoWidth / video.videoHeight;
                 resizeCanvas();
-                start=0; end=video.duration;
-                current=(start+end)/2;
-                video.currentTime=current;
+                start = 0; end = video.duration; current = (start + end) / 2;
+                video.currentTime = current;
                 video.pause();
-                controls.style.display='block';
+                controls.style.display = 'block';
             }, {once:true});
         }
     });
 }
+
 fileDropSetup();
 
+canvas.addEventListener('click', handleClick);
 yesBtn.addEventListener('click',()=>binaryStep('yes'));
 noBtn.addEventListener('click',()=>binaryStep('no'));
 saveBtn.addEventListener('click',()=>{
