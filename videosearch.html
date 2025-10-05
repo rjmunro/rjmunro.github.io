@@ -42,6 +42,13 @@
     text-align: center;
     padding: 10px;
   }
+  #messageBox {
+    color: #00bcd4; /* Cyan/Info color for status messages */
+    font-weight: bold;
+    margin-bottom: 15px;
+    height: 1.2em; /* Ensure stable layout */
+    font-size: 1.05em;
+  }
   #controls p {
     font-size: 1.1em;
     margin-bottom: 10px;
@@ -86,6 +93,7 @@
 </div>
 <div id="controls">
   <p>Has the event you are searching for occurred BEFORE or AT this frame?</p>
+  <div id="messageBox">Drag and drop a video file here to begin.</div>
   <button id="yesBtn">Yes (Go Left)</button>
   <button id="noBtn">No (Go Right)</button>
   <button id="saveBtn">Save Timestamp</button>
@@ -99,6 +107,7 @@ const yesBtn = document.getElementById('yesBtn');
 const noBtn = document.getElementById('noBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
+const messageBox = document.getElementById('messageBox'); // Added message box
 
 // --- Video Element Setup (Created in JS to avoid initial DOM clutter) ---
 let video = document.createElement('video');
@@ -194,6 +203,14 @@ function drawVideoFrame(){
         ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
     }
 
+    // Looping Logic: If playing, check if we hit the 'end' boundary of the search range.
+    if (!video.paused && video.duration > 0) {
+        // If current time is close to the search end boundary, loop back to the search start boundary.
+        if (video.currentTime >= end - 0.05) {
+            seekTo(start);
+        }
+    }
+
     drawTimeline(); // Always draw the timeline
     requestAnimationFrame(drawVideoFrame); // Loop
 }
@@ -201,7 +218,6 @@ function drawVideoFrame(){
 // --- Marker Management ---
 function addMarker(time, color){
     // Remove existing markers very close to this time, but only if they are the opposite color.
-    // This is to prevent confusion if the user overrides a previous decision.
     markers = markers.filter(m => !(Math.abs(m.time - time) < 0.1 && m.color !== color));
     markers.push({time, color});
     markers.sort((a, b) => a.time - b.time); // Keep markers sorted by time
@@ -224,59 +240,71 @@ function getLastMarkers(){
 
 // --- Core Binary Search Logic (Triggered by 'Yes'/'No' buttons) ---
 function binaryStep(answer){
-    // 1. Add a marker at the current timestamp
-    addMarker(current, answer === 'yes' ? 'green' : 'red');
+    const markTime = video.currentTime; // Use the video's current playhead position
+    const color = answer === 'yes' ? 'green' : 'red';
 
-    // 2. Update the search boundaries (start/end)
-    const { lastYes, firstNo } = getLastMarkers();
-
-    // The boundary update is implicitly handled by getLastMarkers based on all markers,
-    // but the original code updates the local start/end variables directly based on the *last* decision.
-    // For simplicity, we use the local update method from the original code:
-    if(answer === 'yes') {
-        end = current;   // Event occurred: search earlier (left half)
-    } else {
-        start = current; // Event did not occur: search later (right half)
+    // 1. Conflict Resolution: Remove markers that are now invalidated by the new decision.
+    if (color === 'green') {
+        // New 'Yes' (event occurred at/before markTime): Remove any 'No' markers that fall before markTime.
+        markers = markers.filter(m => !(m.color === 'red' && m.time < markTime));
+    } else { // color === 'red'
+        // New 'No' (event occurred after markTime): Remove any 'Yes' markers that fall after markTime.
+        markers = markers.filter(m => !(m.color === 'green' && m.time > markTime));
     }
+    // Re-sort markers after potential removal
+    markers.sort((a, b) => a.time - b.time);
 
-    // 3. Calculate the new midpoint (Binary Search step)
-    current = start + (end - start) / 2;
+    // 2. Add the new marker at the playhead position
+    addMarker(markTime, color);
+    current = markTime; // Update 'current' to the latest decision point
 
-    // 4. Check for termination condition (range is very small)
+    // 3. Recalculate Boundaries (start/end) based on all valid markers
+    const { lastYes, firstNo } = getLastMarkers();
+    start = lastYes; // New search start
+    end = firstNo;   // New search end
+
+    // 4. Calculate the new midpoint for the next step
+    const nextCurrent = start + (end - start) / 2;
+
+    // 5. Check for termination condition
     if(Math.abs(end - start) < 0.05){
-        // Use a custom message box instead of alert() for better UI, but keeping original logic for compatibility
-        alert('Event found at: ' + current.toFixed(2) + ' seconds');
+        messageBox.textContent = '✅ Event found at: ' + current.toFixed(2) + ' seconds!';
         saveBtn.style.display = 'inline';
+        video.pause();
         return;
     }
 
-    // 5. Seek to the new midpoint
-    seekTo(current);
+    // 6. Seek to the new midpoint
+    seekTo(nextCurrent);
+    current = nextCurrent; // Update 'current' for the next decision point
+    messageBox.textContent = `Current search range: ${start.toFixed(2)}s to ${end.toFixed(2)}s.`;
+    video.pause(); // Always pause after a binary step to allow assessment
 }
 
-// --- Canvas Click Handling (Manual Scrubbing) ---
-function handleClick(event){
-    if(!video.duration) return; // Ignore if video is not loaded
+// --- Canvas Click Handling (Combined Scrubbing and Play/Pause) ---
+function handleCanvasClick(event){
+    if(!video.duration) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
 
-    // Calculate the clicked time based on x-position relative to canvas width
-    const clickTime = x / canvas.width * video.duration;
-    current = clickTime;
+    // Check if click is on the timeline area
+    const isTimelineClick = y > (canvas.height - timelineHeight);
 
-    const {lastYes, firstNo} = getLastMarkers();
-
-    // If the click is within the current search bracket (lastYes < clickTime < firstNo),
-    // allow a short preview playback. Otherwise, seek to the middle of the range.
-    if(clickTime > lastYes && clickTime < firstNo) {
+    if (isTimelineClick) {
+        // Timeline Click: Manual Scrubbing
+        const clickTime = x / canvas.width * video.duration;
+        current = clickTime;
         seekTo(clickTime);
-        video.play();
-        setTimeout(() => video.pause(), 200); // Play for a brief moment
+        video.pause(); // Pause after scrubbing
     } else {
-        // If the user clicks outside the bounds, snap back to the current midpoint
-        const mid = lastYes + (firstNo - lastYes) / 2;
-        seekTo(mid);
+        // Video Area Click: Play/Pause Toggle
+        if (video.paused || video.ended) {
+            video.play();
+        } else {
+            video.pause();
+        }
     }
 }
 
@@ -314,11 +342,13 @@ function fileDropSetup(){
                 start = 0;
                 end = video.duration;
                 current = (start + end) / 2; // Start in the middle
+                markers = []; // Clear old markers
 
                 seekTo(current);
                 video.pause();
 
                 controls.style.display = 'block'; // Show controls
+                messageBox.textContent = `Current search range: ${start.toFixed(2)}s to ${end.toFixed(2)}s.`;
             }, { once: true });
         }
     });
@@ -327,7 +357,8 @@ function fileDropSetup(){
 fileDropSetup();
 
 // --- Event Listeners for Interaction ---
-canvas.addEventListener('click', handleClick);
+// Replaced handleClick with handleCanvasClick
+canvas.addEventListener('click', handleCanvasClick);
 yesBtn.addEventListener('click', () => binaryStep('yes'));
 noBtn.addEventListener('click', () => binaryStep('no'));
 
