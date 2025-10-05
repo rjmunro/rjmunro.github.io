@@ -2,97 +2,115 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Video Event Binary Search</title>
+<title>Video Event Binary Search on Canvas</title>
 <style>
-  body { font-family: sans-serif; text-align: center; margin: 20px; }
-  #videoContainer { position: relative; display: inline-block; }
-  #timeline { width: 600px; height: 20px; background: #eee; margin: 10px auto; position: relative; }
-  .marker { width: 4px; height: 20px; position: absolute; top: 0; }
-  .green { background: green; }
-  .red { background: red; }
-  button { margin: 5px; }
+  html, body { margin:0; padding:0; width:100%; height:100%; display:flex; justify-content:center; align-items:center; font-family:sans-serif; }
+  canvas { border:1px solid #ccc; background:#eee; cursor:pointer; }
+  #controls { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:none; }
+  #controls button { margin:5px; font-size:16px; padding:8px 16px; }
+  #saveBtn { margin-top:10px; display:none; }
 </style>
 </head>
 <body>
-
-<h2>Video Event Binary Search</h2>
-<input type="file" id="fileInput" accept="video/*">
-<div id="videoContainer">
-  <video id="video" width="600" controls></video>
-</div>
-<div id="timeline"></div>
-<div id="controls" style="display:none;">
+<canvas id="canvas" width="900" height="600"></canvas>
+<div id="controls">
   <p>Has the event occurred?</p>
   <button id="yesBtn">Yes</button>
   <button id="noBtn">No</button>
+  <button id="saveBtn">Save Timestamp</button>
 </div>
-<p><button id="saveBtn" style="display:none;">Save Timestamp</button></p>
-
 <script>
-const video = document.getElementById('video');
-const fileInput = document.getElementById('fileInput');
-const timeline = document.getElementById('timeline');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const controls = document.getElementById('controls');
 const yesBtn = document.getElementById('yesBtn');
 const noBtn = document.getElementById('noBtn');
-const controls = document.getElementById('controls');
 const saveBtn = document.getElementById('saveBtn');
 
+let video = document.createElement('video');
+video.crossOrigin = 'anonymous';
+video.width = canvas.width;
+video.height = canvas.height - 100; // leave space for timeline
+
 let markers = [];
-let start = 0;
-let end = 0;
-let current = 0;
+let start = 0, end = 0, current = 0;
+let dragging = false;
 
-fileInput.addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (file) {
-    const url = URL.createObjectURL(file);
-    video.src = url;
-    video.addEventListener('loadedmetadata', () => {
-      start = 0;
-      end = video.duration;
-      current = (start + end) / 2;
-      video.currentTime = current;
-      controls.style.display = 'block';
+function drawTimeline() {
+    const timelineHeight = 40;
+    ctx.fillStyle = '#ccc';
+    ctx.fillRect(0, canvas.height - timelineHeight, canvas.width, timelineHeight);
+    // Draw markers
+    markers.forEach(m => {
+        ctx.fillStyle = m.color;
+        const x = m.time/video.duration * canvas.width;
+        ctx.fillRect(x-2, canvas.height - timelineHeight, 4, timelineHeight);
     });
-  }
-});
-
-function addMarker(time, color) {
-  const marker = document.createElement('div');
-  marker.className = 'marker ' + color;
-  marker.style.left = (time/video.duration*100) + '%';
-  timeline.appendChild(marker);
-  markers.push({time, color});
 }
 
-function binaryStep(answer) {
-  if (answer === 'yes') {
-    addMarker(current, 'green');
-    end = current;
-    current = start + (end - start)/2;
-  } else {
-    addMarker(current, 'red');
-    start = current;
-    current = start + (end - start)/2;
-  }
-  video.currentTime = current;
-  if (Math.abs(end - start) < 0.01) { // threshold 0.01s
-    alert('Event found at: ' + current.toFixed(2) + ' seconds');
-    saveBtn.style.display = 'inline';
-  }
+function drawVideoFrame() {
+    if(video.readyState >= 2){
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height-40);
+    }
+    drawTimeline();
+    requestAnimationFrame(drawVideoFrame);
 }
 
-yesBtn.addEventListener('click', () => binaryStep('yes'));
-noBtn.addEventListener('click', () => binaryStep('no'));
+function addMarker(time, color){
+    markers.push({time, color});
+}
 
-saveBtn.addEventListener('click', () => {
-  const timestamp = current.toFixed(2);
-  const blob = new Blob([timestamp], {type: 'text/plain'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'event_timestamp.txt';
-  a.click();
+function binaryStep(answer){
+    if(answer === 'yes') {
+        addMarker(current,'green');
+        end = current;
+        current = start + (end-start)/2;
+    } else {
+        addMarker(current,'red');
+        start = current;
+        current = start + (end-start)/2;
+    }
+    video.currentTime = current;
+    video.play();
+    setTimeout(()=>video.pause(),200);
+    if(Math.abs(end-start)<0.05){
+        alert('Event found at: '+current.toFixed(2)+' seconds');
+        saveBtn.style.display='inline';
+    }
+}
+
+fileDropSetup();
+function fileDropSetup(){
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if(file){
+            const url = URL.createObjectURL(file);
+            video.src = url;
+            video.addEventListener('loadedmetadata',()=>{
+                start = 0; end = video.duration;
+                current = (start+end)/2;
+                video.currentTime = current;
+                video.pause();
+                controls.style.display='block';
+            }, {once:true});
+        }
+    });
+}
+
+yesBtn.addEventListener('click',()=>binaryStep('yes'));
+noBtn.addEventListener('click',()=>binaryStep('no'));
+saveBtn.addEventListener('click',()=>{
+    const timestamp = current.toFixed(2);
+    const blob = new Blob([timestamp], {type:'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'event_timestamp.txt';
+    a.click();
 });
+
+requestAnimationFrame(drawVideoFrame);
 </script>
 </body>
 </html>
