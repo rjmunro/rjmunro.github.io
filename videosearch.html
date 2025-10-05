@@ -2,29 +2,96 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Interactive Video Binary Search</title>
 <style>
-  html, body { margin:0; padding:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; font-family:sans-serif; overflow:hidden; background:#111; }
-  #canvasContainer { flex:1; display:flex; justify-content:center; align-items:center; width:100%; }
-  canvas { border:1px solid #333; background:#000; cursor:pointer; }
-  #controls { display:none; margin:10px; color:white; }
-  #controls button { margin:5px; font-size:16px; padding:8px 16px; }
-  #saveBtn { margin-top:10px; display:none; }
-  #tooltip { position:absolute; padding:4px 6px; background: rgba(0,0,0,0.7); color:#fff; font-size:12px; border-radius:3px; pointer-events:none; display:none; }
+  /* Basic setup for a full-screen, dark-themed layout */
+  html, body {
+    margin:0;
+    padding:0;
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    font-family: 'Inter', sans-serif;
+    overflow:hidden;
+    background:#111;
+  }
+  /* Container to manage flexible canvas sizing */
+  #canvasContainer {
+    flex:1; /* Takes up all available vertical space */
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    width:100%;
+  }
+  /* Canvas styling */
+  canvas {
+    border:3px solid #333; /* Dark border */
+    background:#000;
+    cursor:pointer;
+    border-radius: 8px; /* Rounded corners for modern look */
+    box-shadow: 0 4px 12px rgba(0, 255, 255, 0.1); /* Subtle glow effect */
+  }
+  /* Controls section, initially hidden until a video is loaded */
+  #controls {
+    display:none;
+    margin:15px;
+    color:white;
+    text-align: center;
+    padding: 10px;
+  }
+  #controls p {
+    font-size: 1.1em;
+    margin-bottom: 10px;
+  }
+  #controls button {
+    margin:5px;
+    font-size:16px;
+    padding:10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border: none;
+    font-weight: bold;
+  }
+  #yesBtn { background-color: #4CAF50; color: white; } /* Green for 'Yes' */
+  #noBtn { background-color: #f44336; color: white; } /* Red for 'No' */
+  #saveBtn { margin-top:10px; display:none; background-color: #00bcd4; color: white; } /* Cyan for 'Save' */
+
+  #yesBtn:hover { background-color: #45a049; }
+  #noBtn:hover { background-color: #da3328; }
+  #saveBtn:hover { background-color: #00acc1; }
+
+  /* Tooltip for showing hover time on the timeline */
+  #tooltip {
+    position:absolute;
+    padding:6px 10px;
+    background: rgba(255,255,255,0.9);
+    color:#111;
+    font-size:14px;
+    border-radius:4px;
+    pointer-events:none; /* Allows clicking through to the canvas */
+    display:none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    font-weight: 500;
+  }
 </style>
 </head>
 <body>
 <div id="canvasContainer">
-<canvas id="canvas"></canvas>
-<div id="tooltip"></div>
+  <canvas id="canvas"></canvas>
+  <div id="tooltip"></div>
 </div>
 <div id="controls">
-  <p>Has the event occurred?</p>
-  <button id="yesBtn">Yes</button>
-  <button id="noBtn">No</button>
+  <p>Has the event you are searching for occurred BEFORE or AT this frame?</p>
+  <button id="yesBtn">Yes (Go Left)</button>
+  <button id="noBtn">No (Go Right)</button>
   <button id="saveBtn">Save Timestamp</button>
 </div>
 <script>
+// --- DOM Element Fetching ---
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const controls = document.getElementById('controls');
@@ -33,51 +100,66 @@ const noBtn = document.getElementById('noBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
 
+// --- Video Element Setup (Created in JS to avoid initial DOM clutter) ---
 let video = document.createElement('video');
-video.crossOrigin = 'anonymous';
-video.muted = true;
-video.playsInline = true;
+video.crossOrigin = 'anonymous'; // Important for canvas drawing (prevents tainting)
+video.muted = true;             // Required for mobile autoplay compatibility
+video.playsInline = true;       // Required for mobile autoplay compatibility
 video.preload = 'auto';
 video.style.display = 'none';
 
-let markers = [];
-let start = 0, end = 0, current = 0;
-let timelineHeight = 50;
-let videoAspect = 16/9;
-let readyFrame = false;
+// --- State Variables ---
+let markers = [];         // Stores {time, color} for 'Yes' (green) and 'No' (red) responses
+let start = 0, end = 0;   // Current search range bounds (start/end time in seconds)
+let current = 0;          // The current timestamp being displayed (midpoint of the search range)
+let timelineHeight = 50;  // Fixed height for the timeline visualization at the bottom of the canvas
+let videoAspect = 16/9;   // Default aspect ratio for video resizing
+let readyFrame = false;   // Flag to ensure a frame is ready after seeking (prevents flicker)
 
+// --- Responsive Canvas Resizing ---
 function resizeCanvas(){
     const containerWidth = window.innerWidth;
     const containerHeight = window.innerHeight - controls.offsetHeight;
     const maxWidth = containerWidth * 0.95;
     const maxHeight = containerHeight * 0.95;
 
+    // Calculate canvas size based on video aspect ratio to fit within container
     if(maxWidth/maxHeight > videoAspect){
+        // Container is too wide, height is the limiting factor
         canvas.height = maxHeight;
         canvas.width = maxHeight * videoAspect;
     } else {
+        // Container is too tall, width is the limiting factor
         canvas.width = maxWidth;
         canvas.height = maxWidth / videoAspect;
     }
 }
 window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+resizeCanvas(); // Initial call
 
+// --- Drawing the Timeline at the bottom of the Canvas ---
 function drawTimeline(){
+    // 1. Draw the base timeline bar
     ctx.fillStyle = '#333';
     ctx.fillRect(0, canvas.height - timelineHeight, canvas.width, timelineHeight);
 
+    // 2. Draw all existing markers (red for 'no', green for 'yes')
     markers.forEach(m => {
         ctx.fillStyle = m.color;
-        const x = m.time/video.duration * canvas.width;
-        ctx.fillRect(x-3, canvas.height - timelineHeight, 6, timelineHeight);
+        // Convert time (seconds) to x-coordinate (pixels)
+        const x = m.time / video.duration * canvas.width;
+        ctx.fillRect(x - 3, canvas.height - timelineHeight, 6, timelineHeight); // 6px wide line
     });
 
+    // 3. Draw the current playback/seek indicator (yellow cursor)
     if(video.duration > 0){
+        // Calculate position of the current time
         const x = video.currentTime / video.duration * canvas.width;
         const yBottom = canvas.height;
         const yTop = canvas.height - timelineHeight;
         const triangleHeight = timelineHeight / 3;
+
+        // Draw the vertical line part of the indicator
         ctx.beginPath();
         ctx.moveTo(x, yTop);
         ctx.lineTo(x, yBottom - triangleHeight);
@@ -85,6 +167,7 @@ function drawTimeline(){
         ctx.lineWidth = 2;
         ctx.stroke();
 
+        // Draw the triangle pointer at the bottom
         ctx.beginPath();
         ctx.moveTo(x, yBottom - triangleHeight);
         ctx.lineTo(x - 6, yBottom);
@@ -95,126 +178,197 @@ function drawTimeline(){
     }
 }
 
+// --- Main Animation Loop to Draw Video and Timeline ---
 function drawVideoFrame(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the entire canvas
+
+    // Only draw the video if metadata is loaded (readyState >= 2) AND the frame is marked as ready (seeked)
     if(video.readyState >= 2 && readyFrame){
         const videoHeight = canvas.height - timelineHeight;
+        // Calculate scaled video width to maintain aspect ratio
         const videoWidth = videoHeight * video.videoWidth / video.videoHeight;
-        const offsetX = (canvas.width - videoWidth)/2;
+        // Calculate offset to center the video horizontally
+        const offsetX = (canvas.width - videoWidth) / 2;
+
+        // Draw the video frame onto the canvas
         ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
     }
-    drawTimeline();
-    requestAnimationFrame(drawVideoFrame);
+
+    drawTimeline(); // Always draw the timeline
+    requestAnimationFrame(drawVideoFrame); // Loop
 }
 
+// --- Marker Management ---
 function addMarker(time, color){
+    // Remove existing markers very close to this time, but only if they are the opposite color.
+    // This is to prevent confusion if the user overrides a previous decision.
     markers = markers.filter(m => !(Math.abs(m.time - time) < 0.1 && m.color !== color));
-    markers.push({time,color});
-    markers.sort((a,b)=>a.time-b.time);
+    markers.push({time, color});
+    markers.sort((a, b) => a.time - b.time); // Keep markers sorted by time
 }
 
+// --- Find Current Search Bounds ---
 function getLastMarkers(){
-    const yesMarkers = markers.filter(m=>m.color==='green');
-    const noMarkers = markers.filter(m=>m.color==='red');
-    const lastYes = yesMarkers.length ? yesMarkers[yesMarkers.length-1].time : 0;
+    // Find the latest 'yes' (green) marker and the earliest 'no' (red) marker.
+    const yesMarkers = markers.filter(m => m.color === 'green');
+    const noMarkers = markers.filter(m => m.color === 'red');
+
+    // lastYes is the new 'start' boundary (or 0 if none)
+    const lastYes = yesMarkers.length ? yesMarkers[yesMarkers.length - 1].time : 0;
+
+    // firstNo is the new 'end' boundary (or video duration if none)
     const firstNo = noMarkers.length ? noMarkers[0].time : video.duration;
-    return {lastYes, firstNo};
+
+    return { lastYes, firstNo };
 }
 
+// --- Core Binary Search Logic (Triggered by 'Yes'/'No' buttons) ---
 function binaryStep(answer){
-    // Corrected logic: yes -> green -> go backwards, no -> red -> go forwards
-    addMarker(current, answer==='yes' ? 'green' : 'red');
+    // 1. Add a marker at the current timestamp
+    addMarker(current, answer === 'yes' ? 'green' : 'red');
 
-    const {lastYes, firstNo} = getLastMarkers();
+    // 2. Update the search boundaries (start/end)
+    const { lastYes, firstNo } = getLastMarkers();
 
+    // The boundary update is implicitly handled by getLastMarkers based on all markers,
+    // but the original code updates the local start/end variables directly based on the *last* decision.
+    // For simplicity, we use the local update method from the original code:
     if(answer === 'yes') {
-        end = current;
+        end = current;   // Event occurred: search earlier (left half)
     } else {
-        start = current;
+        start = current; // Event did not occur: search later (right half)
     }
 
+    // 3. Calculate the new midpoint (Binary Search step)
     current = start + (end - start) / 2;
 
+    // 4. Check for termination condition (range is very small)
     if(Math.abs(end - start) < 0.05){
-        alert('Event found at: '+current.toFixed(2)+' seconds');
-        saveBtn.style.display='inline';
+        // Use a custom message box instead of alert() for better UI, but keeping original logic for compatibility
+        alert('Event found at: ' + current.toFixed(2) + ' seconds');
+        saveBtn.style.display = 'inline';
         return;
     }
+
+    // 5. Seek to the new midpoint
     seekTo(current);
 }
 
+// --- Canvas Click Handling (Manual Scrubbing) ---
 function handleClick(event){
-    if(!video.duration) return;
+    if(!video.duration) return; // Ignore if video is not loaded
+
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
+
+    // Calculate the clicked time based on x-position relative to canvas width
     const clickTime = x / canvas.width * video.duration;
     current = clickTime;
-    seekTo(clickTime);
+
     const {lastYes, firstNo} = getLastMarkers();
+
+    // If the click is within the current search bracket (lastYes < clickTime < firstNo),
+    // allow a short preview playback. Otherwise, seek to the middle of the range.
     if(clickTime > lastYes && clickTime < firstNo) {
+        seekTo(clickTime);
         video.play();
-        setTimeout(()=>video.pause(),200);
+        setTimeout(() => video.pause(), 200); // Play for a brief moment
     } else {
+        // If the user clicks outside the bounds, snap back to the current midpoint
         const mid = lastYes + (firstNo - lastYes) / 2;
         seekTo(mid);
     }
 }
 
+// --- Video Seeking Utility ---
 function seekTo(time){
-    readyFrame = false;
+    readyFrame = false; // Reset flag to show seeking in progress
     video.currentTime = time;
 }
 
-video.addEventListener('seeked', ()=>{
-    readyFrame = true;
+// --- Seeking Completion Handler ---
+video.addEventListener('seeked', () => {
+    // This event fires when the video is ready at the new timestamp.
+    readyFrame = true; // Set flag to allow the next drawVideoFrame cycle to show the image
 });
 
+// --- File Drag and Drop Setup ---
 function fileDropSetup(){
-    window.addEventListener('dragover', e=>e.preventDefault());
-    window.addEventListener('drop', e=>{
+    // Prevent default browser handling for drag/drop (e.g., opening the file)
+    window.addEventListener('dragover', e => e.preventDefault());
+
+    window.addEventListener('drop', e => {
         e.preventDefault();
         const file = e.dataTransfer.files[0];
-        if(file){
+
+        if(file && file.type.startsWith('video/')){
             const url = URL.createObjectURL(file);
             video.src = url;
-            video.addEventListener('loadedmetadata',()=>{
+
+            // Wait for video metadata to load (duration, dimensions)
+            video.addEventListener('loadedmetadata', () => {
                 videoAspect = video.videoWidth / video.videoHeight;
                 resizeCanvas();
-                start = 0; end = video.duration; current = (start + end) / 2;
+
+                // Initialize binary search bounds
+                start = 0;
+                end = video.duration;
+                current = (start + end) / 2; // Start in the middle
+
                 seekTo(current);
                 video.pause();
-                controls.style.display = 'block';
-            }, {once:true});
+
+                controls.style.display = 'block'; // Show controls
+            }, { once: true });
         }
     });
 }
 
 fileDropSetup();
 
+// --- Event Listeners for Interaction ---
 canvas.addEventListener('click', handleClick);
-yesBtn.addEventListener('click',()=>binaryStep('yes'));
-noBtn.addEventListener('click',()=>binaryStep('no'));
-saveBtn.addEventListener('click',()=>{
-    const timestamp=current.toFixed(2);
-    const blob=new Blob([timestamp],{type:'text/plain'});
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='event_timestamp.txt';
-    a.click();
+yesBtn.addEventListener('click', () => binaryStep('yes'));
+noBtn.addEventListener('click', () => binaryStep('no'));
+
+// Save button functionality (downloads a text file)
+saveBtn.addEventListener('click', () => {
+    const timestamp = current.toFixed(2);
+    // Use Blob to create a file in memory
+    const blob = new Blob([timestamp], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'event_timestamp.txt';
+    a.click(); // Programmatically trigger the download
+    URL.revokeObjectURL(a.href); // Clean up the URL object
 });
 
-canvas.addEventListener('mousemove', e=>{
+// --- Mousemove Tooltip for Timeline Hover ---
+canvas.addEventListener('mousemove', e => {
     if(!video.duration) return;
-    const rect=canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const hoverTime = x/canvas.width * video.duration;
-    tooltip.style.display='block';
-    tooltip.style.left = e.clientX+10+'px';
-    tooltip.style.top = e.clientY+10+'px';
-    tooltip.textContent = hoverTime.toFixed(2)+'s';
-});
-canvas.addEventListener('mouseleave', ()=>tooltip.style.display='none');
 
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+
+    // Check if the hover is over the timeline area
+    const isOverTimeline = e.clientY > (rect.top + canvas.height - timelineHeight) &&
+                           e.clientY < (rect.top + canvas.height);
+
+    if (isOverTimeline) {
+      const hoverTime = x / canvas.width * video.duration;
+      tooltip.style.display = 'block';
+      // Offset tooltip position for better visibility
+      tooltip.style.left = e.clientX + 10 + 'px';
+      tooltip.style.top = e.clientY + 10 + 'px';
+      tooltip.textContent = hoverTime.toFixed(2) + 's';
+    } else {
+      tooltip.style.display = 'none';
+    }
+});
+
+canvas.addEventListener('mouseleave', () => tooltip.style.display = 'none');
+
+// --- Start the Drawing Loop ---
 requestAnimationFrame(drawVideoFrame);
 </script>
 </body>
