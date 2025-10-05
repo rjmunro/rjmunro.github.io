@@ -110,10 +110,10 @@ const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
 const messageBox = document.getElementById('messageBox');
 
-// --- Video Element Setup (Created in JS to avoid initial DOM clutter) ---
+// --- Video Element Setup ---
 let video = document.createElement('video');
-video.crossOrigin = 'anonymous'; // Important for canvas drawing (prevents tainting)
-video.muted = true;
+video.crossOrigin = 'anonymous';
+// NOTE: video.muted is NOT set to true, as requested by the user.
 video.playsInline = true;
 video.preload = 'auto';
 video.style.display = 'none';
@@ -121,22 +121,18 @@ video.style.display = 'none';
 // --- State Variables ---
 let markers = [];         // Stores {time, color} for 'Yes' (green) and 'No' (red) responses
 let start = 0, end = 0;   // Current search range bounds (start/end time in seconds)
-let current = 0;          // The current timestamp being displayed
+let current = 0;          // The current timestamp being displayed (binary search midpoint or scrub position)
 let timelineHeight = 50;  // Fixed height for the timeline visualization
 let videoAspect = 16/9;   // Default aspect ratio for video resizing
-let readyFrame = false;   // Flag to ensure a frame is ready after seeking
+let isDraggingTimeline = false; // State for continuous scrubbing
+let scrubTargetTime = null; // NEW: The time the video should play to and then pause
 
 // --- Time Formatting Utility ---
 function formatTime(totalSeconds) {
     if (isNaN(totalSeconds) || totalSeconds < 0) return '00:00.00';
 
-    // Ensure seconds is a non-negative number
     const secs = Math.floor(Math.max(0, totalSeconds));
-
-    // Calculate fractional part (hundredths of a second)
     const fractional = Math.floor((totalSeconds - secs) * 100);
-
-    // Calculate hours, minutes, and remaining seconds
     const hours = Math.floor(secs / 3600);
     const minutes = Math.floor((secs % 3600) / 60);
     const remainingSeconds = secs % 60;
@@ -146,11 +142,9 @@ function formatTime(totalSeconds) {
     const formattedFractional = String(fractional).padStart(2, '0');
 
     if (hours > 0) {
-        // If duration is an hour or more, include hours
         const formattedHours = String(hours).padStart(2, '0');
         return `${formattedHours}:${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
     } else {
-        // Otherwise, use mm:ss.xx format
         return `${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
     }
 }
@@ -165,11 +159,9 @@ function resizeCanvas(){
 
     // Calculate canvas size based on video aspect ratio to fit within container
     if(maxWidth/maxHeight > videoAspect){
-        // Container is too wide, height is the limiting factor
         canvas.height = maxHeight;
         canvas.width = maxHeight * videoAspect;
     } else {
-        // Container is too tall, width is the limiting factor
         canvas.width = maxWidth;
         canvas.height = maxWidth / videoAspect;
     }
@@ -190,18 +182,15 @@ function drawTimeline(){
     ctx.fillStyle = 'rgba(0, 188, 212, 0.2)'; // Cyan with opacity
     ctx.fillRect(startX, canvas.height - timelineHeight, width, timelineHeight);
 
-
     // 3. Draw all existing markers (red for 'no', green for 'yes')
     markers.forEach(m => {
         ctx.fillStyle = m.color;
-        // Convert time (seconds) to x-coordinate (pixels)
         const x = m.time / video.duration * canvas.width;
-        ctx.fillRect(x - 3, canvas.height - timelineHeight, 6, timelineHeight); // 6px wide line
+        ctx.fillRect(x - 3, canvas.height - timelineHeight, 6, timelineHeight);
     });
 
     // 4. Draw the current playback/seek indicator (yellow cursor)
     if(video.duration > 0){
-        // Calculate position of the current time
         const x = video.currentTime / video.duration * canvas.width;
         const yBottom = canvas.height;
         const yTop = canvas.height - timelineHeight;
@@ -226,25 +215,39 @@ function drawTimeline(){
     }
 }
 
+// --- Video Seeking Utility ---
+function seekTo(time){
+    video.currentTime = Math.max(0, Math.min(video.duration, time));
+}
+
 // --- Main Animation Loop to Draw Video and Timeline ---
 function drawVideoFrame(){
     ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the entire canvas
 
-    // Only draw the video if metadata is loaded (readyState >= 2) AND the frame is marked as ready (seeked)
-    if(video.readyState >= 2 && readyFrame){
+    // Fix for black flash: Draw video immediately if dimensions are valid.
+    // This maintains the previous frame while the video seeks.
+    if(video.videoWidth > 0 && video.videoHeight > 0){
         const videoHeight = canvas.height - timelineHeight;
-        // Calculate scaled video width to maintain aspect ratio
         const videoWidth = videoHeight * video.videoWidth / video.videoHeight;
-        // Calculate offset to center the video horizontally
         const offsetX = (canvas.width - videoWidth) / 2;
 
-        // Draw the video frame onto the canvas
         ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
+
+        // --- NEW: Play-to-Target Pause Logic ---
+        if (scrubTargetTime !== null && !video.paused) {
+            // Check if current time has reached or passed the target
+            if (video.currentTime >= scrubTargetTime) {
+                video.pause();
+                seekTo(scrubTargetTime); // Ensure it stops exactly on the target frame
+                scrubTargetTime = null; // Clear the target
+                // If the user stopped dragging, we want the current indicator to stay where the mouse was.
+                current = video.currentTime;
+            }
+        }
     }
 
-    // Looping Logic: If playing, check if we hit the 'end' boundary of the search range.
-    if (!video.paused && video.duration > 0) {
-        // If current time is close to the search end boundary, loop back to the search start boundary.
+    // Looping Logic: If playing for binary search review (not scrubbing), loop back to start.
+    if (!video.paused && video.duration > 0 && scrubTargetTime === null) {
         if (video.currentTime >= end - 0.05) {
             seekTo(start);
         }
@@ -254,57 +257,50 @@ function drawVideoFrame(){
     requestAnimationFrame(drawVideoFrame); // Loop
 }
 
-// --- Marker Management ---
+
+// --- Marker Management & Binary Search Logic (Unchanged) ---
+
 function addMarker(time, color){
-    // Markers are only removed in binaryStep for conflict resolution,
-    // here we just ensure a new marker is added and the list is sorted.
     markers.push({time, color});
-    markers.sort((a, b) => a.time - b.time); // Keep markers sorted by time
+    markers.sort((a, b) => a.time - b.time);
 }
 
-// --- Find Current Search Bounds (Corrected Logic) ---
 function getLastMarkers(){
-    // Red markers ('No') define the event occurred AFTER this time (sets the floor/start bound).
     const noMarkers = markers.filter(m => m.color === 'red');
-    // Green markers ('Yes') define the event occurred at or BEFORE this time (sets the ceiling/end bound).
     const yesMarkers = markers.filter(m => m.color === 'green');
 
-    // lastNo (latest 'No') is the new 'start' boundary (or 0 if none)
     const lastNo = noMarkers.length ? noMarkers[noMarkers.length - 1].time : 0;
-
-    // firstYes (earliest 'Yes') is the new 'end' boundary (or video duration if none)
     const firstYes = yesMarkers.length ? yesMarkers[0].time : video.duration;
 
-    // The search space is now correctly defined as [lastNo, firstYes]
     return { lastNo, firstYes };
 }
 
-// --- Core Binary Search Logic (Triggered by 'Yes'/'No' buttons) ---
 function binaryStep(answer){
-    const markTime = video.currentTime; // Use the video's current playhead position
+    // Ensure scrubbing target is cleared and paused before making a decision
+    scrubTargetTime = null;
+    video.pause();
+
+    const markTime = video.currentTime;
     const color = answer === 'yes' ? 'green' : 'red';
 
-    // 1. Conflict Resolution: Remove markers that are now invalidated by the new decision.
-    if (color === 'green') { // New 'Yes': event must be AT/BEFORE markTime. This sets the ceiling (end).
-        // Remove any 'No' markers (event is AFTER) that fall at or after markTime, as the new 'Yes' contradicts them.
+    // 1. Conflict Resolution
+    if (color === 'green') {
         markers = markers.filter(m => !(m.color === 'red' && m.time >= markTime));
-    } else { // color === 'red' - New 'No': event must be AFTER markTime. This sets the floor (start).
-        // Remove any 'Yes' markers (event is AT/BEFORE) that fall at or before markTime, as the new 'No' contradicts them.
+    } else {
         markers = markers.filter(m => !(m.color === 'green' && m.time <= markTime));
     }
-    // Re-sort markers after potential removal
     markers.sort((a, b) => a.time - b.time);
 
-    // 2. Add the new marker at the playhead position
+    // 2. Add the new marker
     addMarker(markTime, color);
-    current = markTime; // Update 'current' to the latest decision point
+    current = markTime;
 
-    // 3. Recalculate Boundaries (start/end) based on all valid markers
+    // 3. Recalculate Boundaries
     const { lastNo, firstYes } = getLastMarkers();
-    start = lastNo; // New search start (defined by the latest 'No' marker)
-    end = firstYes; // New search end (defined by the earliest 'Yes' marker)
+    start = lastNo;
+    end = firstYes;
 
-    // 4. Calculate the new midpoint for the next step
+    // 4. Calculate the new midpoint
     const nextCurrent = start + (end - start) / 2;
 
     // 5. Check for termination condition
@@ -317,53 +313,49 @@ function binaryStep(answer){
 
     // 6. Seek to the new midpoint
     seekTo(nextCurrent);
-    current = nextCurrent; // Update 'current' for the next decision point
+    current = nextCurrent;
     messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
-    video.pause(); // Always pause after a binary step to allow assessment
+    video.pause();
 }
 
-// --- Canvas Click Handling (Combined Scrubbing and Play/Pause) ---
-function handleCanvasClick(event){
-    if(!video.duration) return;
-
+// --- Helper to calculate time based on mouse x position ---
+function calculateTimeFromEvent(event) {
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    const clampedX = Math.max(0, Math.min(canvas.width, x));
 
-    // Check if click is on the timeline area
-    const isTimelineClick = y > (canvas.height - timelineHeight);
+    return clampedX / canvas.width * video.duration;
+}
 
-    if (isTimelineClick) {
-        // Timeline Click: Manual Scrubbing
-        const clickTime = x / canvas.width * video.duration;
-        current = clickTime;
-        seekTo(clickTime);
-        video.pause(); // Pause after scrubbing
-    } else {
-        // Video Area Click: Play/Pause Toggle
-        if (video.paused || video.ended) {
+// --- NEW: Timeline Scrubbing Logic ---
+function handleTimelineScrub(event) {
+    if(!video.duration || !isDraggingTimeline) return;
+
+    const targetTime = calculateTimeFromEvent(event);
+    const currentTime = video.currentTime;
+    const delta = targetTime - currentTime; // Difference between target and current playback time
+
+    current = targetTime; // Update indicator position immediately
+
+    // 1. Dragging Backward OR Long Forward Jump (> 5s)
+    if (delta < 0 || delta > 5) {
+        scrubTargetTime = null; // Clear play-to-point target
+        video.pause();
+        seekTo(targetTime); // Instant jump (silent)
+    }
+    // 2. Dragging Forward (0 <= delta <= 5s)
+    else {
+        scrubTargetTime = targetTime; // Set the stop point
+        if (video.paused) {
+            // Start playing only if it's currently paused
             video.play();
-        } else {
-            video.pause();
         }
+        // If it's already playing, we just updated the target time, and the loop handles the pause.
     }
 }
 
-// --- Video Seeking Utility ---
-function seekTo(time){
-    readyFrame = false; // Reset flag to show seeking in progress
-    video.currentTime = time;
-}
-
-// --- Seeking Completion Handler ---
-video.addEventListener('seeked', () => {
-    // This event fires when the video is ready at the new timestamp.
-    readyFrame = true; // Set flag to allow the next drawVideoFrame cycle to show the image
-});
-
-// --- File Drag and Drop Setup ---
+// --- File Drag and Drop Setup (Unchanged) ---
 function fileDropSetup(){
-    // Prevent default browser handling for drag/drop (e.g., opening the file)
     window.addEventListener('dragover', e => e.preventDefault());
 
     window.addEventListener('drop', e => {
@@ -374,7 +366,6 @@ function fileDropSetup(){
             const url = URL.createObjectURL(file);
             video.src = url;
 
-            // Wait for video metadata to load (duration, dimensions)
             video.addEventListener('loadedmetadata', () => {
                 videoAspect = video.videoWidth / video.videoHeight;
                 resizeCanvas();
@@ -382,13 +373,14 @@ function fileDropSetup(){
                 // Initialize binary search bounds
                 start = 0;
                 end = video.duration;
-                current = (start + end) / 2; // Start in the middle
-                markers = []; // Clear old markers
+                current = (start + end) / 2;
+                markers = [];
+                scrubTargetTime = null; // Reset scrub target
 
                 seekTo(current);
                 video.pause();
 
-                controls.style.display = 'block'; // Show controls
+                controls.style.display = 'block';
                 messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
             }, { once: true });
         }
@@ -398,47 +390,89 @@ function fileDropSetup(){
 fileDropSetup();
 
 // --- Event Listeners for Interaction ---
-// Replaced handleClick with handleCanvasClick
-canvas.addEventListener('click', handleCanvasClick);
-yesBtn.addEventListener('click', () => binaryStep('yes'));
-noBtn.addEventListener('click', () => binaryStep('no'));
 
-// Save button functionality (downloads a text file)
-saveBtn.addEventListener('click', () => {
-    const timestamp = current.toFixed(2);
-    // Use Blob to create a file in memory
-    const blob = new Blob([timestamp], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `event_timestamp_${formatTime(current).replace(/[:.]/g, '-')}.txt`;
-    a.click(); // Programmatically trigger the download
-    URL.revokeObjectURL(a.href); // Clean up the URL object
+// MOUSE DOWN (Handles start of scrubbing or video play/pause)
+canvas.addEventListener('mousedown', (event) => {
+    if (!video.duration) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    const isTimelineClick = y > (canvas.height - timelineHeight);
+
+    if (isTimelineClick) {
+        // Timeline Mousedown: Start dragging
+        isDraggingTimeline = true;
+        // Perform initial seek/play logic
+        handleTimelineScrub(event);
+        event.preventDefault();
+    } else {
+        // Video Area Click: Play/Pause Toggle
+        scrubTargetTime = null; // Clear any existing scrub targets
+        if (video.paused || video.ended) {
+            video.play();
+        } else {
+            video.pause();
+        }
+    }
 });
 
-// --- Mousemove Tooltip for Timeline Hover ---
+// MOUSE MOVE (Handles continuous scrubbing and tooltip update)
 canvas.addEventListener('mousemove', e => {
     if(!video.duration) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
 
-    // Check if the hover is over the timeline area
-    const isOverTimeline = e.clientY > (rect.top + canvas.height - timelineHeight) &&
-                           e.clientY < (rect.top + canvas.height);
+    const isOverTimeline = y > (canvas.height - timelineHeight) &&
+                           y < canvas.height;
 
-    if (isOverTimeline) {
-      const hoverTime = x / canvas.width * video.duration;
-      tooltip.style.display = 'block';
-      // Offset tooltip position for better visibility
-      tooltip.style.left = e.clientX + 10 + 'px';
-      tooltip.style.top = e.clientY + 10 + 'px';
-      tooltip.textContent = formatTime(hoverTime); // Use new format
+    if (isDraggingTimeline) {
+        // Continuous scrubbing is active
+        handleTimelineScrub(e);
+    }
+
+    // Tooltip management
+    if (isOverTimeline || isDraggingTimeline) {
+        const hoverTime = calculateTimeFromEvent(e);
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.clientX + 10 + 'px';
+        tooltip.style.top = e.clientY + 10 + 'px';
+        tooltip.textContent = formatTime(hoverTime);
     } else {
-      tooltip.style.display = 'none';
+        tooltip.style.display = 'none';
     }
 });
 
-canvas.addEventListener('mouseleave', () => tooltip.style.display = 'none');
+// MOUSE UP (Stops scrubbing) - Use window to catch releases outside the canvas
+window.addEventListener('mouseup', () => {
+    if (isDraggingTimeline) {
+        // When dragging stops, perform a final pause and clear the target
+        video.pause();
+        scrubTargetTime = null;
+    }
+    isDraggingTimeline = false;
+});
+
+// Other button listeners
+yesBtn.addEventListener('click', () => binaryStep('yes'));
+noBtn.addEventListener('click', () => binaryStep('no'));
+
+// Save button functionality
+saveBtn.addEventListener('click', () => {
+    const timestamp = current.toFixed(2);
+    const blob = new Blob([timestamp], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `event_timestamp_${formatTime(current).replace(/[:.]/g, '-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+});
+
+canvas.addEventListener('mouseleave', () => {
+    if (!isDraggingTimeline) {
+        tooltip.style.display = 'none';
+    }
+});
 
 // --- Start the Drawing Loop ---
 requestAnimationFrame(drawVideoFrame);
