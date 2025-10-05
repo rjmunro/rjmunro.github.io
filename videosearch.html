@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Video Event Binary Search</title>
+<style>
+  body { font-family: sans-serif; text-align: center; margin: 20px; }
+  #videoContainer { position: relative; display: inline-block; }
+  #timeline { width: 600px; height: 20px; background: #eee; margin: 10px auto; position: relative; }
+  .marker { width: 4px; height: 20px; position: absolute; top: 0; }
+  .green { background: green; }
+  .red { background: red; }
+  button { margin: 5px; }
+</style>
+</head>
+<body>
+
+<h2>Video Event Binary Search</h2>
+<input type="file" id="fileInput" accept="video/*">
+<div id="videoContainer">
+  <video id="video" width="600" controls></video>
+</div>
+<div id="timeline"></div>
+<div id="controls" style="display:none;">
+  <p>Has the event occurred?</p>
+  <button id="yesBtn">Yes</button>
+  <button id="noBtn">No</button>
+</div>
+<p><button id="saveBtn" style="display:none;">Save Timestamp</button></p>
+
+<script>
+const video = document.getElementById('video');
+const fileInput = document.getElementById('fileInput');
+const timeline = document.getElementById('timeline');
+const yesBtn = document.getElementById('yesBtn');
+const noBtn = document.getElementById('noBtn');
+const controls = document.getElementById('controls');
+const saveBtn = document.getElementById('saveBtn');
+
+let markers = [];
+let start = 0;
+let end = 0;
+let current = 0;
+
+fileInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) {
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.addEventListener('loadedmetadata', () => {
+      start = 0;
+      end = video.duration;
+      current = (start + end) / 2;
+      video.currentTime = current;
+      controls.style.display = 'block';
+    });
+  }
+});
+
+function addMarker(time, color) {
+  const marker = document.createElement('div');
+  marker.className = 'marker ' + color;
+  marker.style.left = (time/video.duration*100) + '%';
+  timeline.appendChild(marker);
+  markers.push({time, color});
+}
+
+function binaryStep(answer) {
+  if (answer === 'yes') {
+    addMarker(current, 'green');
+    end = current;
+    current = start + (end - start)/2;
+  } else {
+    addMarker(current, 'red');
+    start = current;
+    current = start + (end - start)/2;
+  }
+  video.currentTime = current;
+  if (Math.abs(end - start) < 0.01) { // threshold 0.01s
+    alert('Event found at: ' + current.toFixed(2) + ' seconds');
+    saveBtn.style.display = 'inline';
+  }
+}
+
+yesBtn.addEventListener('click', () => binaryStep('yes'));
+noBtn.addEventListener('click', () => binaryStep('no'));
+
+saveBtn.addEventListener('click', () => {
+  const timestamp = current.toFixed(2);
+  const blob = new Blob([timestamp], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'event_timestamp.txt';
+  a.click();
+});
+</script>
+</body>
+</html>
