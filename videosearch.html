@@ -118,14 +118,18 @@ video.playsInline = true;
 video.preload = 'auto';
 video.style.display = 'none';
 
-// --- State Variables ---
+// --- State Variables and Constants ---
 let markers = [];         // Stores {time, color} for 'Yes' (green) and 'No' (red) responses
 let start = 0, end = 0;   // Current search range bounds (start/end time in seconds)
 let current = 0;          // The current timestamp being displayed (binary search midpoint or scrub position)
 let timelineHeight = 50;  // Fixed height for the timeline visualization
 let videoAspect = 16/9;   // Default aspect ratio for video resizing
 let isDraggingTimeline = false; // State for continuous scrubbing
-let scrubTargetTime = null; // NEW: The time the video should play to and then pause
+let scrubTargetTime = null; // The time the video should play to and then pause
+
+// --- Constants for Seeking ---
+const SEEK_STEP_SMALL = 0.1;      // For Arrow keys (100ms jump)
+const SEEK_STEP_FRAME = 0.0333;   // Approximate 1/30th of a second for frame step
 
 // --- Time Formatting Utility ---
 function formatTime(totalSeconds) {
@@ -233,14 +237,13 @@ function drawVideoFrame(){
 
         ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
 
-        // --- NEW: Play-to-Target Pause Logic ---
+        // --- Play-to-Target Pause Logic ---
         if (scrubTargetTime !== null && !video.paused) {
             // Check if current time has reached or passed the target
             if (video.currentTime >= scrubTargetTime) {
                 video.pause();
                 seekTo(scrubTargetTime); // Ensure it stops exactly on the target frame
                 scrubTargetTime = null; // Clear the target
-                // If the user stopped dragging, we want the current indicator to stay where the mouse was.
                 current = video.currentTime;
             }
         }
@@ -327,7 +330,7 @@ function calculateTimeFromEvent(event) {
     return clampedX / canvas.width * video.duration;
 }
 
-// --- NEW: Timeline Scrubbing Logic ---
+// --- Timeline Scrubbing Logic ---
 function handleTimelineScrub(event) {
     if(!video.duration || !isDraggingTimeline) return;
 
@@ -337,20 +340,25 @@ function handleTimelineScrub(event) {
 
     current = targetTime; // Update indicator position immediately
 
-    // 1. Dragging Backward OR Long Forward Jump (> 5s)
-    if (delta < 0 || delta > 5) {
-        scrubTargetTime = null; // Clear play-to-point target
-        video.pause();
-        seekTo(targetTime); // Instant jump (silent)
-    }
-    // 2. Dragging Forward (0 <= delta <= 5s)
-    else {
+    // Check if the drag is strictly forward (delta > 0) AND within the 5-second window.
+    const isShortForwardDrag = (delta > 0 && delta <= 5);
+
+    if (isShortForwardDrag) {
+        // --- Play-to-Point Logic ---
         scrubTargetTime = targetTime; // Set the stop point
         if (video.paused) {
             // Start playing only if it's currently paused
             video.play();
         }
-        // If it's already playing, we just updated the target time, and the loop handles the pause.
+        // No instant seek: let the video play naturally toward scrubTargetTime.
+    } else {
+        // --- Instant Seek Logic (Backward drag, stationary, or long forward drag) ---
+        // This covers: delta <= 0 (backward/stationary) OR delta > 5 (long jump).
+        scrubTargetTime = null; // Clear any existing play-to-point target
+        if (!video.paused) {
+            video.pause(); // Explicitly pause if it was playing
+        }
+        seekTo(targetTime); // Instant jump/seek to the mouse position
     }
 }
 
@@ -473,6 +481,64 @@ canvas.addEventListener('mouseleave', () => {
         tooltip.style.display = 'none';
     }
 });
+
+// --- Keyboard Interaction ---
+function handleKeyPress(e) {
+    if (!video.duration) return; // Ignore if no video is loaded
+
+    // Prevent default actions for keys we handle (like space scrolling the page)
+    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.'].includes(e.key)) {
+        e.preventDefault();
+    }
+
+    // Stop all playback/scrubbing before any keyboard action
+    if (isDraggingTimeline) return;
+    scrubTargetTime = null;
+
+    // Explicitly pause if not toggling play/pause, otherwise, allow play/pause to run
+    if(e.key !== ' '){
+        video.pause();
+    }
+
+    switch (e.key) {
+        case ' ': // Spacebar: Play/Pause
+            if (video.paused || video.ended) {
+                video.play();
+            } else {
+                video.pause();
+            }
+            break;
+
+        case 'ArrowRight': // Right Arrow: Seek forward 0.1s
+            seekTo(video.currentTime + SEEK_STEP_SMALL);
+            break;
+
+        case 'ArrowLeft': // Left Arrow: Seek backward 0.1s
+            seekTo(video.currentTime - SEEK_STEP_SMALL);
+            break;
+
+        case '.': // '.' key: Frame forward (assuming 30fps)
+            seekTo(video.currentTime + SEEK_STEP_FRAME);
+            break;
+
+        case ',': // ',' key: Frame backward (assuming 30fps)
+            seekTo(video.currentTime - SEEK_STEP_FRAME);
+            break;
+
+        case 'ArrowDown': // Down Arrow: 'Yes' (Go Backwards)
+            yesBtn.click();
+            break;
+
+        case 'ArrowUp': // Up Arrow: 'No' (Go Forwards)
+            noBtn.click();
+            break;
+    }
+    // Update 'current' state after seeking to ensure the indicator matches the video time immediately
+    current = video.currentTime;
+}
+
+window.addEventListener('keydown', handleKeyPress);
+
 
 // --- Start the Drawing Loop ---
 requestAnimationFrame(drawVideoFrame);
