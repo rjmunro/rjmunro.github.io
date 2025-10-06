@@ -243,7 +243,7 @@
             <li><kbd>Space</kbd>: Toggle Play/Pause</li>
             <li><kbd>Ctrl/Cmd+Z</kbd>, <kbd>Backspace</kbd>, <kbd>Delete</kbd>: <b>Undo Step</b> (Remove least impactful boundary marker)</li>
             <li><kbd>←</kbd> / <kbd>→</kbd>: Skip <b>5 seconds</b> (Back/Forward)</li>
-            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step (Accurate based on detected FPS)</li>
+            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step</li>
             <li><kbd>↓</kbd>: <b>Yes</b> (Go Backwards / Set new upper bound)</li>
             <li><kbd>↑</kbd>: <b>No</b> (Go Forwards / Set new lower bound)</li>
         </ul>
@@ -282,7 +282,7 @@ const ctx = canvas.getContext('2d');
 const controls = document.getElementById('controls');
 const yesBtn = document.getElementById('yesBtn');
 const noBtn = document.getElementById('noBtn');
-const undoBtn = document.getElementById('undoBtn'); // New Undo button
+const undoBtn = document.getElementById('undoBtn');
 const clearBtn = document.getElementById('clearBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
@@ -311,6 +311,10 @@ let timelineHeight = 50;
 let videoAspect = 16/9;
 let isDraggingTimeline = false;
 let scrubTargetTime = null;
+
+// --- Frame Stepping History (New) ---
+let seekHistory = []; // Stores frame-accurate timestamps from forward steps ('.')
+const FRAME_EPSILON = .01; // Tolerance for current comparison - will work for up to 100fps
 
 // --- Constants for Seeking ---
 const SEEK_JUMP = 5.0;
@@ -421,6 +425,45 @@ function drawTimeline(){
 function seekTo(time){
     video.currentTime = Math.max(0, Math.min(video.duration, time));
 }
+
+// --- Frame Accurate Forward Seek (New) ---
+function seekToNextFrame() {
+    if (!video.duration || !video.paused) return;
+
+    // 1. Define the callback function
+    const callback = (now, metadata) => {
+        // This runs when the next frame is rendered
+        video.pause();
+        // Use mediaTime for the most precise frame timestamp
+        const frameTime = metadata.mediaTime;
+
+        // Only push to history if it's a genuine frame-step forward
+        if (frameTime > current) {
+            seekHistory.push(frameTime);
+        }
+
+        // Set the state and perform final seek
+        current = frameTime;
+        seekTo(frameTime);
+    };
+
+    // 2. Clear any pending rVFCs before setting the new one
+    if (video._rVFC_id) {
+        video.cancelVideoFrameCallback(video._rVFC_id);
+    }
+
+    // 3. Register the callback and store its ID for potential cancellation
+    video._rVFC_id = video.requestVideoFrameCallback(callback);
+
+    // 4. Start playback to trigger the next frame rendering
+    video.play().catch(error => {
+        console.error("Video play failed for rVFC seek. Falling back to time-based seek.", error);
+        // Fallback: simple time-based seek
+        video.pause();
+        seekTo(video.currentTime + SEEK_STEP_FRAME);
+    });
+}
+
 
 // --- Main Animation Loop to Draw Video and Timeline ---
 function drawVideoFrame(){
@@ -620,6 +663,7 @@ function showConfirmationModal(message, actionCallback) {
 function clearMarkersAndReset() {
     markers = [];
     scrubTargetTime = null;
+    seekHistory = []; // Clear the frame history on reset (New)
     video.pause();
     // Initialize bounds and seek to midpoint
     updateBoundsAndSeek(true);
@@ -782,12 +826,12 @@ window.addEventListener('mouseup', () => {
 // Other button listeners
 yesBtn.addEventListener('click', () => binaryStep('yes'));
 noBtn.addEventListener('click', () => binaryStep('no'));
-undoBtn.addEventListener('click', undoBinaryStep); // New Undo listener
+undoBtn.addEventListener('click', undoBinaryStep);
 
 // Clear Markers button listener
 clearBtn.addEventListener('click', () => {
     showConfirmationModal(
-        'Are you sure you want to clear all binary search markers and restart the search?',
+        'Are you sure you want to clear all binary search markers and frame-step history?',
         clearMarkersAndReset
     );
 });
@@ -838,19 +882,38 @@ function handleKeyPress(e) {
             break;
 
         case 'arrowright': // Right Arrow: Seek forward 5s
+            // Clearing history on large jump
             seekTo(video.currentTime + SEEK_JUMP);
             break;
 
         case 'arrowleft': // Left Arrow: Seek backward 5s
+            // Clearing history on large jump
             seekTo(video.currentTime - SEEK_JUMP);
             break;
 
-        case '.': // '.' key: Frame forward (uses calculated SEEK_STEP_FRAME)
-            seekTo(video.currentTime + SEEK_STEP_FRAME);
+        case '.': // '.' key: Frame forward (Uses rVFC for accuracy)
+            seekToNextFrame();
             break;
 
-        case ',': // ',' key: Frame backward (uses calculated SEEK_STEP_FRAME)
-            seekTo(video.currentTime - SEEK_STEP_FRAME);
+        case ',': // ',' key: Frame backward (Uses seekHistory or falls back)
+            let targetTime = video.currentTime - SEEK_STEP_FRAME; // Default fallback (30fps)
+
+            if (seekHistory.length > 0) {
+                const lastHistoryTime = seekHistory[seekHistory.length - 1];
+
+                // Check if current video time is close enough to the last recorded forward step
+                if (Math.abs(video.currentTime - lastHistoryTime) < FRAME_EPSILON) {
+                    seekHistory.pop(); // Remove the current frame's timestamp
+                    if (seekHistory.length > 0) {
+                        targetTime = seekHistory[seekHistory.length - 1]; // Jump back to the previous recorded frame
+                    }
+                } else {
+                    // Current time doesn't match history (user scrubbed/jumped), clear history
+                    seekHistory = [];
+                }
+            }
+
+            seekTo(targetTime);
             break;
 
         case 'arrowdown': // Down Arrow: 'Yes' (Go Backwards)
