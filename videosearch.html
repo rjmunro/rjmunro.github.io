@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interactive Video Binary Search</title>
+<style>
+  /* Basic setup for a full-screen, dark-themed layout */
+  html, body {
+    margin:0;
+    padding:0;
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    font-family: 'Inter', sans-serif;
+    overflow:hidden;
+    background:#111;
+  }
+  /* Container to manage flexible canvas sizing */
+  #canvasContainer {
+    flex:1; /* Takes up all available vertical space */
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    width:100%;
+    position: relative; /* Essential for positioning the splash screen over the canvas */
+  }
+  /* Canvas styling */
+  canvas {
+    border:3px solid #333; /* Dark border */
+    background:#000;
+    cursor:pointer;
+    border-radius: 8px; /* Rounded corners for modern look */
+    box-shadow: 0 4px 12px rgba(0, 255, 255, 0.1); /* Subtle glow effect */
+    z-index: 10;
+  }
+  /* Splash screen overlay for instructions and file selection */
+  #splashScreen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(17, 17, 17, 0.95); /* Semi-transparent dark overlay */
+    color: white;
+    z-index: 20; /* Above canvas */
+    padding-bottom: 50px;
+    text-align: center;
+    border-radius: 8px;
+    opacity: 1;
+    transition: opacity 0.3s;
+  }
+  #splashScreen h2 {
+    color: #00bcd4;
+    font-size: 2em;
+    margin-bottom: 10px;
+  }
+  #splashScreen p {
+    font-size: 1.1em;
+    margin-bottom: 15px;
+    max-width: 80%;
+  }
+  .upload-btn {
+    background-color: #4CAF50;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border: none;
+    font-weight: bold;
+    font-size: 18px;
+    margin: 5px;
+  }
+  .upload-btn:hover {
+    background-color: #45a049;
+  }
+  .instructions-keybinds {
+    margin-top: 30px;
+    padding: 15px 30px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  }
+  .instructions-keybinds h3 {
+    color: #00bcd4;
+    margin-bottom: 10px;
+    font-size: 1.2em;
+  }
+  .instructions-keybinds ul {
+    list-style: none;
+    padding: 0;
+    text-align: left;
+  }
+  .instructions-keybinds li {
+    margin: 8px 0;
+  }
+  .instructions-keybinds kbd {
+    background: #444;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid #555;
+    font-family: monospace;
+    font-size: 0.95em;
+    margin-right: 5px;
+    min-width: 25px;
+    display: inline-block;
+    text-align: center;
+  }
+  /* Controls section, initially hidden until a video is loaded */
+  #controls {
+    display:none;
+    margin:15px;
+    color:white;
+    text-align: center;
+    padding: 10px;
+  }
+  #messageBox {
+    color: #00bcd4; /* Cyan/Info color for status messages */
+    font-weight: bold;
+    margin-bottom: 15px;
+    height: 1.2em; /* Ensure stable layout */
+    font-size: 1.05em;
+  }
+  #controls p {
+    font-size: 1.1em;
+    margin-bottom: 10px;
+  }
+  #controls button {
+    margin:5px;
+    font-size:16px;
+    padding:10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border: none;
+    font-weight: bold;
+  }
+  #yesBtn { background-color: #4CAF50; color: white; } /* Green for 'Yes' (Upper Bound) */
+  #noBtn { background-color: #f44336; color: white; } /* Red for 'No' (Lower Bound) */
+  #clearBtn { background-color: #f39c12; color: white; } /* Amber for 'Clear' */
+  #undoBtn { background-color: #9b59b6; color: white; } /* Purple for 'Undo' */
+  #saveBtn { margin-top:10px; display:none; background-color: #00bcd4; color: white; } /* Cyan for 'Save' */
+
+  #yesBtn:hover { background-color: #45a049; }
+  #noBtn:hover { background-color: #da3328; }
+  #clearBtn:hover { background-color: #e67e22; }
+  #undoBtn:hover { background-color: #8e44ad; }
+  #saveBtn:hover { background-color: #00acc1; }
+
+  /* Tooltip for showing hover time on the timeline */
+  #tooltip {
+    position:absolute;
+    padding:6px 10px;
+    background: rgba(255,255,255,0.9);
+    color:#111;
+    font-size:14px;
+    border-radius:4px;
+    pointer-events:none; /* Allows clicking through to the canvas */
+    display:none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    font-weight: 500;
+  }
+
+  /* Custom Confirmation Modal Styling */
+  #confirmModal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 30;
+    justify-content: center;
+    align-items: center;
+  }
+  #confirmModal > div {
+    background: #222;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    color: white;
+    text-align: center;
+    max-width: 400px;
+  }
+  #confirmModal h3 {
+    color: #f44336;
+    margin-top: 0;
+  }
+  #confirmModal button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    margin: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s;
+  }
+  #modalYesBtn {
+    background-color: #f44336;
+    color: white;
+  }
+  #modalYesBtn:hover {
+    background-color: #da3328;
+  }
+  #modalNoBtn {
+    background-color: #555;
+    color: white;
+  }
+  #modalNoBtn:hover {
+    background-color: #777;
+  }
+
+</style>
+</head>
+<body>
+<div id="canvasContainer">
+  <canvas id="canvas"></canvas>
+  <div id="tooltip"></div>
+
+  <!-- Splash Screen with instructions and file selection -->
+  <div id="splashScreen">
+    <h2>Video Event Finder</h2>
+    <p>Use the <b>binary search</b> method to pinpoint the exact time of an event in your video.</p>
+    <p>Drag and drop a video file anywhere on the screen to begin.</p>
+
+    <p>- OR -</p>
+    <button id="selectFileBtn" class="upload-btn">Select Video File</button>
+    <!-- Hidden file input triggered by the button -->
+    <input type="file" id="fileInput" accept="video/*" style="display: none;">
+
+    <div class="instructions-keybinds">
+        <h3>Keyboard Controls:</h3>
+        <ul>
+            <li><kbd>Space</kbd>: Toggle Play/Pause</li>
+            <li><kbd>Ctrl/Cmd+Z</kbd>, <kbd>Backspace</kbd>, <kbd>Delete</kbd>: <b>Undo Step</b> (Remove least impactful boundary marker)</li>
+            <li><kbd>←</kbd> / <kbd>→</kbd>: Skip <b>5 seconds</b> (Back/Forward)</li>
+            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step</li>
+            <li><kbd>↓</kbd>: <b>Yes</b> (Go Backwards / Set new upper bound)</li>
+            <li><kbd>↑</kbd>: <b>No</b> (Go Forwards / Set new lower bound)</li>
+        </ul>
+    </div>
+  </div>
+
+</div>
+<div id="controls">
+  <!-- Status line for the detected FPS and search range -->
+  <div id="messageBox"></div>
+
+  <!-- Binary Search Question -->
+  <p>Has the event you are searching for occurred **BEFORE or AT** this frame?</p>
+
+  <button id="yesBtn">Yes (Go Backwards)</button>
+  <button id="noBtn">No (Go Forwards)</button>
+  <button id="undoBtn">Undo Step</button>
+  <button id="clearBtn">Clear Markers</button>
+  <button id="saveBtn">Save Timestamp</button>
+</div>
+
+<!-- Custom Confirmation Modal (Replaces browser alert/confirm) -->
+<div id="confirmModal">
+  <div>
+    <h3>Confirm Action</h3>
+    <p id="confirmMessage">Are you sure you want to clear all binary search markers and restart the search?</p>
+    <button id="modalYesBtn">Yes, Clear All</button>
+    <button id="modalNoBtn">Cancel</button>
+  </div>
+</div>
+
+<script>
+// --- DOM Element Fetching ---
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const controls = document.getElementById('controls');
+const yesBtn = document.getElementById('yesBtn');
+const noBtn = document.getElementById('noBtn');
+const undoBtn = document.getElementById('undoBtn');
+const clearBtn = document.getElementById('clearBtn');
+const saveBtn = document.getElementById('saveBtn');
+const tooltip = document.getElementById('tooltip');
+const messageBox = document.getElementById('messageBox');
+const fileInput = document.getElementById('fileInput');
+const selectFileBtn = document.getElementById('selectFileBtn');
+const splashScreen = document.getElementById('splashScreen');
+
+// Modal Elements
+const confirmModal = document.getElementById('confirmModal');
+const modalYesBtn = document.getElementById('modalYesBtn');
+const modalNoBtn = document.getElementById('modalNoBtn');
+
+// --- Video Element Setup ---
+let video = document.createElement('video');
+video.crossOrigin = 'anonymous';
+video.playsInline = true;
+video.preload = 'auto';
+video.style.display = 'none';
+
+// --- State Variables and Constants ---
+let markers = [];
+let start = 0, end = 0;
+let current = 0;
+let timelineHeight = 50;
+let videoAspect = 16/9;
+let isDraggingTimeline = false;
+let scrubTargetTime = null;
+
+// --- Frame Stepping History (New) ---
+let seekHistory = []; // Stores frame-accurate timestamps from forward steps ('.')
+const FRAME_EPSILON = .01; // Tolerance for current comparison - will work for up to 100fps
+
+// --- Constants for Seeking ---
+const SEEK_JUMP = 5.0;
+let videoFrameRate = 30;          // Default/Static FPS for stability
+let SEEK_STEP_FRAME = 1 / videoFrameRate; // Calculated frame step time
+
+// --- Function to update Frame Rate and Frame Step ---
+function updateFrameRate(newFps) {
+    const rate = parseFloat(newFps);
+    if (rate && rate >= 1) {
+        videoFrameRate = rate;
+        SEEK_STEP_FRAME = 1 / videoFrameRate;
+        return true;
+    }
+    return false;
+}
+
+// --- Time Formatting Utility ---
+function formatTime(totalSeconds) {
+    if (isNaN(totalSeconds) || totalSeconds < 0) return '00:00.00';
+
+    const secs = Math.floor(Math.max(0, totalSeconds));
+    // Calculate milliseconds for higher precision display
+    const fractional = Math.floor((totalSeconds - secs) * 1000);
+    const hours = Math.floor(secs / 3600);
+    const minutes = Math.floor((secs % 3600) / 60);
+    const remainingSeconds = secs % 60;
+
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(remainingSeconds).padStart(2, '0');
+    const formattedFractional = String(fractional).padStart(3, '0').slice(0, 2); // Use 2 decimal places
+
+    if (hours > 0) {
+        const formattedHours = String(hours).padStart(2, '0');
+        return `${formattedHours}:${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
+    } else {
+        return `${formattedMinutes}:${formattedSeconds}.${formattedFractional}`;
+    }
+}
+
+
+// --- Responsive Canvas Resizing ---
+function resizeCanvas(){
+    const containerWidth = window.innerWidth;
+    const containerHeight = window.innerHeight - (controls.offsetHeight || 100);
+    const maxWidth = containerWidth * 0.95;
+    const maxHeight = containerHeight * 0.95;
+
+    // Calculate canvas size based on video aspect ratio to fit within container
+    if(maxWidth/maxHeight > videoAspect){
+        canvas.height = maxHeight;
+        canvas.width = maxHeight * videoAspect;
+    } else {
+        canvas.width = maxWidth;
+        canvas.height = maxWidth / videoAspect;
+    }
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas(); // Initial call
+
+// --- Drawing the Timeline at the bottom of the Canvas ---
+function drawTimeline(){
+    // 1. Draw the base timeline bar
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, canvas.height - timelineHeight, canvas.width, timelineHeight);
+
+    // 2. Draw the current search range (light blue highlight)
+    const startX = start / video.duration * canvas.width;
+    const endX = end / video.duration * canvas.width;
+    const width = endX - startX;
+    ctx.fillStyle = 'rgba(0, 188, 212, 0.2)'; // Cyan with opacity
+    ctx.fillRect(startX, canvas.height - timelineHeight, width, timelineHeight);
+
+    // 3. Draw all existing markers (red for 'no', green for 'yes')
+    markers.forEach(m => {
+        ctx.fillStyle = m.color;
+        const x = m.time / video.duration * canvas.width;
+        ctx.fillRect(x - 3, canvas.height - timelineHeight, 6, timelineHeight);
+    });
+
+    // 4. Draw the current playback/seek indicator (yellow cursor)
+    if(video.duration > 0){
+        const x = video.currentTime / video.duration * canvas.width;
+        const yBottom = canvas.height;
+        const yTop = canvas.height - timelineHeight;
+        const triangleHeight = timelineHeight / 3;
+
+        // Draw the vertical line part of the indicator
+        ctx.beginPath();
+        ctx.moveTo(x, yTop);
+        ctx.lineTo(x, yBottom - triangleHeight);
+        ctx.strokeStyle = 'yellow';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Draw the triangle pointer at the bottom
+        ctx.beginPath();
+        ctx.moveTo(x, yBottom - triangleHeight);
+        ctx.lineTo(x - 6, yBottom);
+        ctx.lineTo(x + 6, yBottom);
+        ctx.closePath();
+        ctx.fillStyle = 'yellow';
+        ctx.fill();
+    }
+}
+
+// --- Video Seeking Utility ---
+function seekTo(time){
+    video.currentTime = Math.max(0, Math.min(video.duration, time));
+}
+
+// --- Frame Accurate Forward Seek (New) ---
+function seekToNextFrame() {
+    if (!video.duration || !video.paused) return;
+
+    // 1. Define the callback function
+    const callback = (now, metadata) => {
+        // This runs when the next frame is rendered
+        // Use mediaTime for the most precise frame timestamp
+        const frameTime = metadata.mediaTime;
+        console.log(`rVFC callback at mediaTime: ${frameTime}`);
+
+        // If the frameTime is very close to current, we consider it the same frame
+        if (Math.abs(frameTime - current) < FRAME_EPSILON) {
+            // No frame advancement, do nothing
+            console.log("No frame advancement detected.");
+            video._rVFC_id = video.requestVideoFrameCallback(callback)
+            return;
+        }
+        video.pause();
+
+        // Only push to history if it's a genuine frame-step forward
+        if (frameTime > current) {
+            seekHistory.push(frameTime);
+        }
+
+        // Set the state and perform final seek
+        current = frameTime;
+        seekTo(frameTime);
+    };
+
+    // 2. Clear any pending rVFCs before setting the new one
+    if (video._rVFC_id) {
+        video.cancelVideoFrameCallback(video._rVFC_id);
+    }
+
+    // 3. Register the callback and store its ID for potential cancellation
+    video._rVFC_id = video.requestVideoFrameCallback(callback);
+
+    // 4. Start playback to trigger the next frame rendering
+    video.play().catch(error => {
+        console.error("Video play failed for rVFC seek. Falling back to time-based seek.", error);
+        // Fallback: simple time-based seek
+        video.pause();
+        seekTo(video.currentTime + SEEK_STEP_FRAME);
+    });
+}
+
+
+// --- Main Animation Loop to Draw Video and Timeline ---
+function drawVideoFrame(){
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw video frame
+    if(video.videoWidth > 0 && video.videoHeight > 0){
+        const videoHeight = canvas.height - timelineHeight;
+        const videoWidth = videoHeight * video.videoWidth / video.videoHeight;
+        const offsetX = (canvas.width - videoWidth) / 2;
+
+        ctx.drawImage(video, offsetX, 0, videoWidth, videoHeight);
+
+        // --- Play-to-Target Pause Logic ---
+        if (scrubTargetTime !== null && !video.paused) {
+            if (video.currentTime >= scrubTargetTime) {
+                video.pause();
+                seekTo(scrubTargetTime);
+                scrubTargetTime = null;
+                current = video.currentTime;
+            }
+        }
+    }
+
+    // Looping Logic: If playing for binary search review, loop back to start.
+    if (!video.paused && video.duration > 0 && scrubTargetTime === null) {
+        // Loop just before 'end' to prevent the player from jumping forward
+        if (video.currentTime >= end - SEEK_STEP_FRAME) {
+            seekTo(start);
+        }
+    }
+
+    drawTimeline(); // Always draw the timeline
+    requestAnimationFrame(drawVideoFrame); // Loop
+}
+
+
+// --- Marker Management & Binary Search Logic ---
+
+function addMarker(time, color){
+    markers.push({time, color});
+    markers.sort((a, b) => a.time - b.time);
+}
+
+function getLastMarkers(){
+    const noMarkers = markers.filter(m => m.color === 'red');
+    const yesMarkers = markers.filter(m => m.color === 'green');
+
+    // lastNo is the maximum time for a 'No' (Lower Bound)
+    const lastNo = noMarkers.length ? Math.max(...noMarkers.map(m => m.time)) : 0;
+    // firstYes is the minimum time for a 'Yes' (Upper Bound)
+    const firstYes = yesMarkers.length ? Math.min(...yesMarkers.map(m => m.time)) : video.duration;
+
+    return { lastNo, firstYes };
+}
+
+function updateBoundsAndSeek(markersChanged = false) {
+    const { lastNo, firstYes } = getLastMarkers();
+    start = lastNo;
+    end = firstYes;
+
+    // Check for termination condition
+    if (Math.abs(end - start) < SEEK_STEP_FRAME) {
+        messageBox.textContent = `✅ Event found near: ${formatTime(current)} (FPS: ${videoFrameRate.toFixed(2)})!`;
+        saveBtn.style.display = 'inline';
+        video.pause();
+        seekTo(current);
+        return;
+    }
+
+    // Calculate the new midpoint only if markers have changed or on init
+    if (markersChanged || current === 0) {
+        current = start + (end - start) / 2;
+        seekTo(current);
+        video.pause();
+    }
+
+    saveBtn.style.display = 'none';
+    messageBox.textContent = `FPS: ${videoFrameRate.toFixed(2)} (Default) | Search Range: ${formatTime(start)} to ${formatTime(end)}.`;
+}
+
+function binaryStep(answer){
+    scrubTargetTime = null;
+    video.pause();
+
+    const markTime = video.currentTime;
+    const color = answer === 'yes' ? 'green' : 'red';
+
+    // 1. Conflict Resolution (Remove inconsistent markers)
+    if (color === 'green') {
+        // A 'Yes' marker invalidates any previous 'No' markers at or after it
+        markers = markers.filter(m => !(m.color === 'red' && m.time >= markTime));
+    } else {
+        // A 'No' marker invalidates any previous 'Yes' markers at or before it
+        markers = markers.filter(m => !(m.color === 'green' && m.time <= markTime));
+    }
+
+    // 2. Add the new marker
+    addMarker(markTime, color);
+
+    // 3. Recalculate and seek
+    updateBoundsAndSeek(true);
+}
+
+// Revised undo function: remove the boundary marker that results in the least range expansion
+function undoBinaryStep() {
+    if (markers.length === 0) {
+        messageBox.textContent = "No markers to undo.";
+        return;
+    }
+
+    const duration = video.duration;
+    // Get all times by type
+    const allRedTimes = markers.filter(m => m.color === 'red').map(m => m.time);
+    const allGreenTimes = markers.filter(m => m.color === 'green').map(m => m.time);
+
+    // Get current bounds (R_max = start, G_min = end)
+    const R_max_time = allRedTimes.length ? Math.max(...allRedTimes) : 0;
+    const G_min_time = allGreenTimes.length ? Math.min(...allGreenTimes) : duration;
+
+    // Handle single marker case: just remove it
+    if (markers.length === 1) {
+        markers.splice(0, 1);
+        updateBoundsAndSeek(true);
+        messageBox.textContent = `Undo successful. Single marker removed.`;
+        return;
+    }
+
+    let markerIndexToRemove = -1;
+    let expansionStart = Infinity; // Expansion if R_max is removed
+    let expansionEnd = Infinity;   // Expansion if G_min is removed
+
+    // --- 1. Calculate expansion if R_max (Lower Bound) is removed ---
+    if (R_max_time > 0) {
+        // Find the second latest red time (R_max_2nd)
+        const R_max_2nd_time = allRedTimes
+            .filter(t => t < R_max_time)
+            .reduce((max, t) => Math.max(max, t), 0); // Default to 0
+
+        // Expansion is the difference between the new start and the old start
+        expansionStart = R_max_time - R_max_2nd_time;
+    }
+
+    // --- 2. Calculate expansion if G_min (Upper Bound) is removed ---
+    if (G_min_time < duration) {
+        // Find the second earliest green time (G_min_2nd)
+        const G_min_2nd_time = allGreenTimes
+            .filter(t => t > G_min_time)
+            .reduce((min, t) => Math.min(min, t), duration); // Default to duration
+
+        // Expansion is the difference between the new end and the old end
+        expansionEnd = G_min_2nd_time - G_min_time;
+    }
+
+    // --- 3. Decide which boundary marker to remove (remove the one with the least impact) ---
+    // If expansionStart is smaller, or if they are equal, prioritize removing R_max.
+    if (expansionStart <= expansionEnd && expansionStart !== Infinity) {
+        // Remove the marker defining R_max (the latest 'red' marker)
+        markerIndexToRemove = markers.findLastIndex(m => m.time === R_max_time && m.color === 'red');
+    } else if (expansionEnd < expansionStart && expansionEnd !== Infinity) {
+        // Remove the marker defining G_min (the earliest 'green' marker)
+        markerIndexToRemove = markers.findIndex(m => m.time === G_min_time && m.color === 'green');
+    }
+
+    // --- 4. Perform removal and update state ---
+    if (markerIndexToRemove !== -1) {
+        markers.splice(markerIndexToRemove, 1);
+        messageBox.textContent = `Undo successful. Least impactful boundary marker removed.`;
+        updateBoundsAndSeek(true);
+    } else {
+        // Fallback for unexpected cases (e.g., only one color but the time was 0 or duration)
+        messageBox.textContent = "Undo operation failed to find a boundary marker to remove.";
+    }
+}
+
+
+// --- Custom Confirmation Modal Logic (No alert/confirm) ---
+
+// Function to show the confirmation modal
+function showConfirmationModal(message, actionCallback) {
+    document.getElementById('confirmMessage').textContent = message;
+    confirmModal.style.display = 'flex';
+
+    // Set the action when 'Yes' is clicked
+    modalYesBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+        actionCallback();
+    };
+
+    // Set the action when 'Cancel' is clicked
+    modalNoBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+    };
+}
+
+// Function to reset all markers and state
+function clearMarkersAndReset() {
+    markers = [];
+    scrubTargetTime = null;
+    seekHistory = []; // Clear the frame history on reset (New)
+    video.pause();
+    // Initialize bounds and seek to midpoint
+    updateBoundsAndSeek(true);
+}
+
+
+// --- Helper to calculate time based on mouse x position ---
+function calculateTimeFromEvent(event) {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const clampedX = Math.max(0, Math.min(canvas.width, x));
+
+    return clampedX / canvas.width * video.duration;
+}
+
+// --- Timeline Scrubbing Logic ---
+function handleTimelineScrub(event) {
+    if(!video.duration || !isDraggingTimeline) return;
+
+    const targetTime = calculateTimeFromEvent(event);
+    const currentTime = video.currentTime;
+    const delta = targetTime - currentTime;
+
+    current = targetTime;
+
+    // Play-to-Point Logic for short forward drags (less than SEEK_JUMP)
+    const isShortForwardDrag = (delta > 0 && delta <= SEEK_JUMP);
+
+    if (isShortForwardDrag) {
+        scrubTargetTime = targetTime;
+        if (video.paused) {
+            video.play().catch(() => {});
+        }
+    } else {
+        // Instant Seek Logic (Backward drag, stationary, or long forward jump)
+        scrubTargetTime = null;
+        if (!video.paused) {
+            video.pause();
+        }
+        seekTo(targetTime);
+    }
+}
+
+// --- File Drag and Drop & Input Setup ---
+async function loadVideo(file) {
+    if(file && file.type.startsWith('video/')){
+        const url = URL.createObjectURL(file);
+        video.src = url;
+
+        // 1. Wait for loadedmetadata event to get duration and dimensions
+        messageBox.textContent = "Loading video metadata...";
+        await new Promise(resolve => {
+            video.addEventListener('loadedmetadata', resolve, { once: true });
+        });
+
+        videoAspect = video.videoWidth / video.videoHeight;
+        resizeCanvas();
+
+        // 2. Set Static FPS and initialize bounds
+        videoFrameRate = 30; // Set static FPS
+        updateFrameRate(videoFrameRate); // Update the step time
+
+        // 3. Initialize binary search bounds and seek to the midpoint
+        clearMarkersAndReset();
+
+        // 4. Finalize UI and start search
+        controls.style.display = 'block';
+        splashScreen.style.opacity = 0;
+        setTimeout(() => {
+            splashScreen.style.display = 'none';
+            resizeCanvas();
+        }, 300);
+    }
+}
+
+function fileDropSetup(){
+    // Drag/Drop handling
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => {
+        e.preventDefault();
+        loadVideo(e.dataTransfer.files[0]);
+    });
+
+    // Button click to trigger file input
+    selectFileBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // File input change handling
+    fileInput.addEventListener('change', (e) => {
+        loadVideo(e.target.files[0]);
+        e.target.value = null; // Reset input so same file can be loaded again
+    });
+}
+
+// Set initial FPS value (30) and frame step on load
+updateFrameRate(videoFrameRate);
+fileDropSetup();
+
+// --- Event Listeners for Interaction ---
+
+// MOUSE DOWN (Handles start of scrubbing or video play/pause)
+canvas.addEventListener('mousedown', (event) => {
+    if (!video.duration) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    const isTimelineClick = y > (canvas.height - timelineHeight);
+
+    if (isTimelineClick) {
+        isDraggingTimeline = true;
+        handleTimelineScrub(event);
+        event.preventDefault();
+    } else {
+        // Video Area Click: Play/Pause Toggle
+        scrubTargetTime = null;
+        if (video.paused || video.ended) {
+            video.play().catch(() => {});
+        } else {
+            video.pause();
+        }
+    }
+});
+
+// MOUSE MOVE (Handles continuous scrubbing and tooltip update)
+canvas.addEventListener('mousemove', e => {
+    if(!video.duration) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+
+    const isOverTimeline = y > (canvas.height - timelineHeight) &&
+                           y < canvas.height;
+
+    if (isDraggingTimeline) {
+        handleTimelineScrub(e);
+    }
+
+    // Tooltip management
+    if (isOverTimeline || isDraggingTimeline) {
+        const hoverTime = calculateTimeFromEvent(e);
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.clientX + 10 + 'px';
+        tooltip.style.top = e.clientY + 10 + 'px';
+        tooltip.textContent = formatTime(hoverTime);
+    } else {
+        tooltip.style.display = 'none';
+    }
+});
+
+// MOUSE UP (Stops scrubbing)
+window.addEventListener('mouseup', () => {
+    if (isDraggingTimeline) {
+        video.pause();
+        scrubTargetTime = null;
+    }
+    isDraggingTimeline = false;
+});
+
+// Other button listeners
+yesBtn.addEventListener('click', () => binaryStep('yes'));
+noBtn.addEventListener('click', () => binaryStep('no'));
+undoBtn.addEventListener('click', undoBinaryStep);
+
+// Clear Markers button listener
+clearBtn.addEventListener('click', () => {
+    showConfirmationModal(
+        'Are you sure you want to clear all binary search markers and frame-step history?',
+        clearMarkersAndReset
+    );
+});
+
+// Save button functionality
+saveBtn.addEventListener('click', () => {
+    // Save timestamp with 3 decimal places for high precision
+    const timestamp = current.toFixed(3);
+    const blob = new Blob([timestamp], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `event_timestamp_${formatTime(current).replace(/[:.]/g, '-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+});
+
+canvas.addEventListener('mouseleave', () => {
+    if (!isDraggingTimeline) {
+        tooltip.style.display = 'none';
+    }
+});
+
+// --- Keyboard Interaction (Includes Ctrl/Cmd+Z, Backspace, Delete for Undo) ---
+function handleKeyPress(e) {
+    if (!video.duration || splashScreen.style.display !== 'none') return;
+
+    // List of keys we handle and want to prevent default browser behavior for
+    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.', 'z', 'backspace', 'delete'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+    }
+
+    // Stop all playback/scrubbing before any keyboard action
+    if (isDraggingTimeline) return;
+    scrubTargetTime = null;
+
+    // Explicitly pause if not toggling play/pause, otherwise, allow play/pause to run
+    if(e.key !== ' '){
+        video.pause();
+    }
+
+    switch (e.key.toLowerCase()) {
+        case ' ': // Spacebar: Play/Pause
+            if (video.paused || video.ended) {
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+            break;
+
+        case 'arrowright': // Right Arrow: Seek forward 5s
+            // Clearing history on large jump
+            seekTo(video.currentTime + SEEK_JUMP);
+            break;
+
+        case 'arrowleft': // Left Arrow: Seek backward 5s
+            // Clearing history on large jump
+            seekTo(video.currentTime - SEEK_JUMP);
+            break;
+
+        case '.': // '.' key: Frame forward (Uses rVFC for accuracy)
+            seekToNextFrame();
+            break;
+
+        case ',': // ',' key: Frame backward (Uses seekHistory or falls back)
+            let targetTime = video.currentTime - SEEK_STEP_FRAME; // Default fallback (30fps)
+
+            if (seekHistory.length > 0) {
+                const lastHistoryTime = seekHistory[seekHistory.length - 1];
+
+                // Check if current video time is close enough to the last recorded forward step
+                if (Math.abs(video.currentTime - lastHistoryTime) < FRAME_EPSILON) {
+                    seekHistory.pop(); // Remove the current frame's timestamp
+                    if (seekHistory.length > 0) {
+                        targetTime = seekHistory[seekHistory.length - 1]; // Jump back to the previous recorded frame
+                    }
+                } else {
+                    // Current time doesn't match history (user scrubbed/jumped), clear history
+                    seekHistory = [];
+                }
+            }
+
+            seekTo(targetTime);
+            break;
+
+        case 'arrowdown': // Down Arrow: 'Yes' (Go Backwards)
+            yesBtn.click();
+            break;
+
+        case 'arrowup': // Up Arrow: 'No' (Go Forwards)
+            noBtn.click();
+            break;
+
+        case 'z': // Ctrl/Cmd+Z: Undo
+            if (e.ctrlKey || e.metaKey) {
+                undoBinaryStep();
+            }
+            break;
+
+        case 'backspace': // Backspace: Undo
+        case 'delete':    // Delete: Undo
+            undoBinaryStep();
+            break;
+    }
+    // Update 'current' state after seeking to ensure the indicator matches the video time immediately
+    current = video.currentTime;
+}
+
+window.addEventListener('keydown', handleKeyPress);
+
+
+// --- Start the Drawing Loop ---
+requestAnimationFrame(drawVideoFrame);
+</script>
+</body>
+</html>
