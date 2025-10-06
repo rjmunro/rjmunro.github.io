@@ -241,6 +241,7 @@
         <h3>Keyboard Controls:</h3>
         <ul>
             <li><kbd>Space</kbd>: Toggle Play/Pause</li>
+            <li><kbd>Ctrl/Cmd+Z</kbd>, <kbd>Backspace</kbd>, <kbd>Delete</kbd>: <b>Undo Step</b> (Remove least impactful boundary marker)</li>
             <li><kbd>←</kbd> / <kbd>→</kbd>: Skip <b>5 seconds</b> (Back/Forward)</li>
             <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step (Accurate based on detected FPS)</li>
             <li><kbd>↓</kbd>: <b>Yes</b> (Go Backwards / Set new upper bound)</li>
@@ -524,42 +525,74 @@ function binaryStep(answer){
     updateBoundsAndSeek(true);
 }
 
+// Revised undo function: remove the boundary marker that results in the least range expansion
 function undoBinaryStep() {
-    if (markers.length < 1) {
+    if (markers.length === 0) {
         messageBox.textContent = "No markers to undo.";
         return;
     }
 
-    // 1. Find the marker with the smallest separation from its neighbor
-    let minDiff = Infinity;
-    let markerIndexToRemove = -1;
+    const duration = video.duration;
+    // Get all times by type
+    const allRedTimes = markers.filter(m => m.color === 'red').map(m => m.time);
+    const allGreenTimes = markers.filter(m => m.color === 'green').map(m => m.time);
 
-    // The markers array is always kept sorted by time
-    for (let i = 0; i < markers.length - 1; i++) {
-        const diff = markers[i+1].time - markers[i].time;
-        if (diff < minDiff) {
-            minDiff = diff;
-            // When we find the closest pair (M[i] and M[i+1]),
-            // remove the one that has the higher time index (i+1).
-            markerIndexToRemove = i + 1;
-        }
-    }
+    // Get current bounds (R_max = start, G_min = end)
+    const R_max_time = allRedTimes.length ? Math.max(...allRedTimes) : 0;
+    const G_min_time = allGreenTimes.length ? Math.min(...allGreenTimes) : duration;
 
-    // Safety check: if only one marker exists, remove that one.
+    // Handle single marker case: just remove it
     if (markers.length === 1) {
-        markerIndexToRemove = 0;
+        markers.splice(0, 1);
+        updateBoundsAndSeek(true);
+        messageBox.textContent = `Undo successful. Single marker removed.`;
+        return;
     }
 
+    let markerIndexToRemove = -1;
+    let expansionStart = Infinity; // Expansion if R_max is removed
+    let expansionEnd = Infinity;   // Expansion if G_min is removed
+
+    // --- 1. Calculate expansion if R_max (Lower Bound) is removed ---
+    if (R_max_time > 0) {
+        // Find the second latest red time (R_max_2nd)
+        const R_max_2nd_time = allRedTimes
+            .filter(t => t < R_max_time)
+            .reduce((max, t) => Math.max(max, t), 0); // Default to 0
+
+        // Expansion is the difference between the new start and the old start
+        expansionStart = R_max_time - R_max_2nd_time;
+    }
+
+    // --- 2. Calculate expansion if G_min (Upper Bound) is removed ---
+    if (G_min_time < duration) {
+        // Find the second earliest green time (G_min_2nd)
+        const G_min_2nd_time = allGreenTimes
+            .filter(t => t > G_min_time)
+            .reduce((min, t) => Math.min(min, t), duration); // Default to duration
+
+        // Expansion is the difference between the new end and the old end
+        expansionEnd = G_min_2nd_time - G_min_time;
+    }
+
+    // --- 3. Decide which boundary marker to remove (remove the one with the least impact) ---
+    // If expansionStart is smaller, or if they are equal, prioritize removing R_max.
+    if (expansionStart <= expansionEnd && expansionStart !== Infinity) {
+        // Remove the marker defining R_max (the latest 'red' marker)
+        markerIndexToRemove = markers.findLastIndex(m => m.time === R_max_time && m.color === 'red');
+    } else if (expansionEnd < expansionStart && expansionEnd !== Infinity) {
+        // Remove the marker defining G_min (the earliest 'green' marker)
+        markerIndexToRemove = markers.findIndex(m => m.time === G_min_time && m.color === 'green');
+    }
+
+    // --- 4. Perform removal and update state ---
     if (markerIndexToRemove !== -1) {
-        // 2. Remove the selected marker
         markers.splice(markerIndexToRemove, 1);
-        messageBox.textContent = `Undo successful. Last boundary change reverted.`;
-
-        // 3. Recalculate Bounds and seek to the new midpoint
+        messageBox.textContent = `Undo successful. Least impactful boundary marker removed.`;
         updateBoundsAndSeek(true);
-
-    } else if (markers.length === 0) {
-        messageBox.textContent = "No markers to undo.";
+    } else {
+        // Fallback for unexpected cases (e.g., only one color but the time was 0 or duration)
+        messageBox.textContent = "Undo operation failed to find a boundary marker to remove.";
     }
 }
 
@@ -777,12 +810,12 @@ canvas.addEventListener('mouseleave', () => {
     }
 });
 
-// --- Keyboard Interaction ---
+// --- Keyboard Interaction (Includes Ctrl/Cmd+Z, Backspace, Delete for Undo) ---
 function handleKeyPress(e) {
     if (!video.duration || splashScreen.style.display !== 'none') return;
 
-    // Prevent default actions for keys we handle (like space scrolling the page)
-    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.', 'z'].includes(e.key.toLowerCase())) {
+    // List of keys we handle and want to prevent default browser behavior for
+    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.', 'z', 'backspace', 'delete'].includes(e.key.toLowerCase())) {
         e.preventDefault();
     }
 
@@ -828,10 +861,15 @@ function handleKeyPress(e) {
             noBtn.click();
             break;
 
-        case 'z': // Z key: Undo
-            if (e.ctrlKey || e.metaKey) { // Ctrl+Z or Cmd+Z
+        case 'z': // Ctrl/Cmd+Z: Undo
+            if (e.ctrlKey || e.metaKey) {
                 undoBinaryStep();
             }
+            break;
+
+        case 'backspace': // Backspace: Undo
+        case 'delete':    // Delete: Undo
+            undoBinaryStep();
             break;
     }
     // Update 'current' state after seeking to ensure the indicator matches the video time immediately
