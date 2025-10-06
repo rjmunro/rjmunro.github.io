@@ -145,10 +145,14 @@
   }
   #yesBtn { background-color: #4CAF50; color: white; } /* Green for 'Yes' (Upper Bound) */
   #noBtn { background-color: #f44336; color: white; } /* Red for 'No' (Lower Bound) */
+  #clearBtn { background-color: #f39c12; color: white; } /* Amber for 'Clear' */
+  #undoBtn { background-color: #9b59b6; color: white; } /* Purple for 'Undo' */
   #saveBtn { margin-top:10px; display:none; background-color: #00bcd4; color: white; } /* Cyan for 'Save' */
 
   #yesBtn:hover { background-color: #45a049; }
   #noBtn:hover { background-color: #da3328; }
+  #clearBtn:hover { background-color: #e67e22; }
+  #undoBtn:hover { background-color: #8e44ad; }
   #saveBtn:hover { background-color: #00acc1; }
 
   /* Tooltip for showing hover time on the timeline */
@@ -164,6 +168,57 @@
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     font-weight: 500;
   }
+
+  /* Custom Confirmation Modal Styling */
+  #confirmModal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 30;
+    justify-content: center;
+    align-items: center;
+  }
+  #confirmModal > div {
+    background: #222;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    color: white;
+    text-align: center;
+    max-width: 400px;
+  }
+  #confirmModal h3 {
+    color: #f44336;
+    margin-top: 0;
+  }
+  #confirmModal button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    margin: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.2s;
+  }
+  #modalYesBtn {
+    background-color: #f44336;
+    color: white;
+  }
+  #modalYesBtn:hover {
+    background-color: #da3328;
+  }
+  #modalNoBtn {
+    background-color: #555;
+    color: white;
+  }
+  #modalNoBtn:hover {
+    background-color: #777;
+  }
+
 </style>
 </head>
 <body>
@@ -187,22 +242,38 @@
         <ul>
             <li><kbd>Space</kbd>: Toggle Play/Pause</li>
             <li><kbd>←</kbd> / <kbd>→</kbd>: Skip <b>5 seconds</b> (Back/Forward)</li>
-            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step (Back/Forward)</li>
-            <li><kbd>↑</kbd>: <b>No</b> (Go Forwards / Set new lower bound)</li>
+            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step (Accurate based on detected FPS)</li>
             <li><kbd>↓</kbd>: <b>Yes</b> (Go Backwards / Set new upper bound)</li>
+            <li><kbd>↑</kbd>: <b>No</b> (Go Forwards / Set new lower bound)</li>
         </ul>
     </div>
   </div>
 
 </div>
 <div id="controls">
-  <!-- Clarified instruction to reflect that 'Yes' sets the upper bound (earlier time) and 'No' sets the lower bound (later time) -->
-  <p>Has the event you are searching for occurred **BEFORE or AT** this frame?</p>
+  <!-- Status line for the detected FPS and search range -->
   <div id="messageBox"></div>
+
+  <!-- Binary Search Question -->
+  <p>Has the event you are searching for occurred **BEFORE or AT** this frame?</p>
+
   <button id="yesBtn">Yes (Go Backwards)</button>
   <button id="noBtn">No (Go Forwards)</button>
+  <button id="undoBtn">Undo Step</button>
+  <button id="clearBtn">Clear Markers</button>
   <button id="saveBtn">Save Timestamp</button>
 </div>
+
+<!-- Custom Confirmation Modal (Replaces browser alert/confirm) -->
+<div id="confirmModal">
+  <div>
+    <h3>Confirm Action</h3>
+    <p id="confirmMessage">Are you sure you want to clear all binary search markers and restart the search?</p>
+    <button id="modalYesBtn">Yes, Clear All</button>
+    <button id="modalNoBtn">Cancel</button>
+  </div>
+</div>
+
 <script>
 // --- DOM Element Fetching ---
 const canvas = document.getElementById('canvas');
@@ -210,49 +281,66 @@ const ctx = canvas.getContext('2d');
 const controls = document.getElementById('controls');
 const yesBtn = document.getElementById('yesBtn');
 const noBtn = document.getElementById('noBtn');
+const undoBtn = document.getElementById('undoBtn'); // New Undo button
+const clearBtn = document.getElementById('clearBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
 const messageBox = document.getElementById('messageBox');
-
-// New elements for file selection and instructions
 const fileInput = document.getElementById('fileInput');
 const selectFileBtn = document.getElementById('selectFileBtn');
 const splashScreen = document.getElementById('splashScreen');
 
+// Modal Elements
+const confirmModal = document.getElementById('confirmModal');
+const modalYesBtn = document.getElementById('modalYesBtn');
+const modalNoBtn = document.getElementById('modalNoBtn');
+
 // --- Video Element Setup ---
 let video = document.createElement('video');
 video.crossOrigin = 'anonymous';
-// NOTE: video.muted is NOT set to true, as requested by the user.
 video.playsInline = true;
 video.preload = 'auto';
 video.style.display = 'none';
 
 // --- State Variables and Constants ---
-let markers = [];         // Stores {time, color} for 'Yes' (green) and 'No' (red) responses
-let start = 0, end = 0;   // Current search range bounds (start/end time in seconds)
-let current = 0;          // The current timestamp being displayed (binary search midpoint or scrub position)
-let timelineHeight = 50;  // Fixed height for the timeline visualization
-let videoAspect = 16/9;   // Default aspect ratio for video resizing
-let isDraggingTimeline = false; // State for continuous scrubbing
-let scrubTargetTime = null; // The time the video should play to and then pause
+let markers = [];
+let start = 0, end = 0;
+let current = 0;
+let timelineHeight = 50;
+let videoAspect = 16/9;
+let isDraggingTimeline = false;
+let scrubTargetTime = null;
 
 // --- Constants for Seeking ---
-const SEEK_JUMP = 5.0;            // Large step for Arrow keys (5 second jump)
-const SEEK_STEP_FRAME = 0.0333;   // Approximate 1/30th of a second for frame step
+const SEEK_JUMP = 5.0;
+let videoFrameRate = 30;          // Default/Static FPS for stability
+let SEEK_STEP_FRAME = 1 / videoFrameRate; // Calculated frame step time
+
+// --- Function to update Frame Rate and Frame Step ---
+function updateFrameRate(newFps) {
+    const rate = parseFloat(newFps);
+    if (rate && rate >= 1) {
+        videoFrameRate = rate;
+        SEEK_STEP_FRAME = 1 / videoFrameRate;
+        return true;
+    }
+    return false;
+}
 
 // --- Time Formatting Utility ---
 function formatTime(totalSeconds) {
     if (isNaN(totalSeconds) || totalSeconds < 0) return '00:00.00';
 
     const secs = Math.floor(Math.max(0, totalSeconds));
-    const fractional = Math.floor((totalSeconds - secs) * 100);
+    // Calculate milliseconds for higher precision display
+    const fractional = Math.floor((totalSeconds - secs) * 1000);
     const hours = Math.floor(secs / 3600);
     const minutes = Math.floor((secs % 3600) / 60);
     const remainingSeconds = secs % 60;
 
     const formattedMinutes = String(minutes).padStart(2, '0');
     const formattedSeconds = String(remainingSeconds).padStart(2, '0');
-    const formattedFractional = String(fractional).padStart(2, '0');
+    const formattedFractional = String(fractional).padStart(3, '0').slice(0, 2); // Use 2 decimal places
 
     if (hours > 0) {
         const formattedHours = String(hours).padStart(2, '0');
@@ -266,7 +354,7 @@ function formatTime(totalSeconds) {
 // --- Responsive Canvas Resizing ---
 function resizeCanvas(){
     const containerWidth = window.innerWidth;
-    const containerHeight = window.innerHeight - controls.offsetHeight;
+    const containerHeight = window.innerHeight - (controls.offsetHeight || 100);
     const maxWidth = containerWidth * 0.95;
     const maxHeight = containerHeight * 0.95;
 
@@ -335,10 +423,9 @@ function seekTo(time){
 
 // --- Main Animation Loop to Draw Video and Timeline ---
 function drawVideoFrame(){
-    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the entire canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Fix for black flash: Draw video immediately if dimensions are valid.
-    // This maintains the previous frame while the video seeks.
+    // Draw video frame
     if(video.videoWidth > 0 && video.videoHeight > 0){
         const videoHeight = canvas.height - timelineHeight;
         const videoWidth = videoHeight * video.videoWidth / video.videoHeight;
@@ -348,19 +435,19 @@ function drawVideoFrame(){
 
         // --- Play-to-Target Pause Logic ---
         if (scrubTargetTime !== null && !video.paused) {
-            // Check if current time has reached or passed the target
             if (video.currentTime >= scrubTargetTime) {
                 video.pause();
-                seekTo(scrubTargetTime); // Ensure it stops exactly on the target frame
-                scrubTargetTime = null; // Clear the target
+                seekTo(scrubTargetTime);
+                scrubTargetTime = null;
                 current = video.currentTime;
             }
         }
     }
 
-    // Looping Logic: If playing for binary search review (not scrubbing), loop back to start.
+    // Looping Logic: If playing for binary search review, loop back to start.
     if (!video.paused && video.duration > 0 && scrubTargetTime === null) {
-        if (video.currentTime >= end - 0.05) {
+        // Loop just before 'end' to prevent the player from jumping forward
+        if (video.currentTime >= end - SEEK_STEP_FRAME) {
             seekTo(start);
         }
     }
@@ -370,7 +457,7 @@ function drawVideoFrame(){
 }
 
 
-// --- Marker Management & Binary Search Logic (Unchanged) ---
+// --- Marker Management & Binary Search Logic ---
 
 function addMarker(time, color){
     markers.push({time, color});
@@ -381,54 +468,130 @@ function getLastMarkers(){
     const noMarkers = markers.filter(m => m.color === 'red');
     const yesMarkers = markers.filter(m => m.color === 'green');
 
-    const lastNo = noMarkers.length ? noMarkers[noMarkers.length - 1].time : 0;
-    const firstYes = yesMarkers.length ? yesMarkers[0].time : video.duration;
+    // lastNo is the maximum time for a 'No' (Lower Bound)
+    const lastNo = noMarkers.length ? Math.max(...noMarkers.map(m => m.time)) : 0;
+    // firstYes is the minimum time for a 'Yes' (Upper Bound)
+    const firstYes = yesMarkers.length ? Math.min(...yesMarkers.map(m => m.time)) : video.duration;
 
     return { lastNo, firstYes };
 }
 
+function updateBoundsAndSeek(markersChanged = false) {
+    const { lastNo, firstYes } = getLastMarkers();
+    start = lastNo;
+    end = firstYes;
+
+    // Check for termination condition
+    if (Math.abs(end - start) < SEEK_STEP_FRAME) {
+        messageBox.textContent = `✅ Event found near: ${formatTime(current)} (FPS: ${videoFrameRate.toFixed(2)})!`;
+        saveBtn.style.display = 'inline';
+        video.pause();
+        seekTo(current);
+        return;
+    }
+
+    // Calculate the new midpoint only if markers have changed or on init
+    if (markersChanged || current === 0) {
+        current = start + (end - start) / 2;
+        seekTo(current);
+        video.pause();
+    }
+
+    saveBtn.style.display = 'none';
+    messageBox.textContent = `FPS: ${videoFrameRate.toFixed(2)} (Default) | Search Range: ${formatTime(start)} to ${formatTime(end)}.`;
+}
+
 function binaryStep(answer){
-    // Ensure scrubbing target is cleared and paused before making a decision
     scrubTargetTime = null;
     video.pause();
 
     const markTime = video.currentTime;
     const color = answer === 'yes' ? 'green' : 'red';
 
-    // 1. Conflict Resolution
+    // 1. Conflict Resolution (Remove inconsistent markers)
     if (color === 'green') {
+        // A 'Yes' marker invalidates any previous 'No' markers at or after it
         markers = markers.filter(m => !(m.color === 'red' && m.time >= markTime));
     } else {
+        // A 'No' marker invalidates any previous 'Yes' markers at or before it
         markers = markers.filter(m => !(m.color === 'green' && m.time <= markTime));
     }
-    markers.sort((a, b) => a.time - b.time);
 
     // 2. Add the new marker
     addMarker(markTime, color);
-    current = markTime;
 
-    // 3. Recalculate Boundaries
-    const { lastNo, firstYes } = getLastMarkers();
-    start = lastNo;
-    end = firstYes;
+    // 3. Recalculate and seek
+    updateBoundsAndSeek(true);
+}
 
-    // 4. Calculate the new midpoint
-    const nextCurrent = start + (end - start) / 2;
-
-    // 5. Check for termination condition
-    if(Math.abs(end - start) < 0.05){
-        messageBox.textContent = `✅ Event found at: ${formatTime(current)}!`;
-        saveBtn.style.display = 'inline';
-        video.pause();
+function undoBinaryStep() {
+    if (markers.length < 1) {
+        messageBox.textContent = "No markers to undo.";
         return;
     }
 
-    // 6. Seek to the new midpoint
-    seekTo(nextCurrent);
-    current = nextCurrent;
-    messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
-    video.pause();
+    // 1. Find the marker with the smallest separation from its neighbor
+    let minDiff = Infinity;
+    let markerIndexToRemove = -1;
+
+    // The markers array is always kept sorted by time
+    for (let i = 0; i < markers.length - 1; i++) {
+        const diff = markers[i+1].time - markers[i].time;
+        if (diff < minDiff) {
+            minDiff = diff;
+            // When we find the closest pair (M[i] and M[i+1]),
+            // remove the one that has the higher time index (i+1).
+            markerIndexToRemove = i + 1;
+        }
+    }
+
+    // Safety check: if only one marker exists, remove that one.
+    if (markers.length === 1) {
+        markerIndexToRemove = 0;
+    }
+
+    if (markerIndexToRemove !== -1) {
+        // 2. Remove the selected marker
+        markers.splice(markerIndexToRemove, 1);
+        messageBox.textContent = `Undo successful. Last boundary change reverted.`;
+
+        // 3. Recalculate Bounds and seek to the new midpoint
+        updateBoundsAndSeek(true);
+
+    } else if (markers.length === 0) {
+        messageBox.textContent = "No markers to undo.";
+    }
 }
+
+
+// --- Custom Confirmation Modal Logic (No alert/confirm) ---
+
+// Function to show the confirmation modal
+function showConfirmationModal(message, actionCallback) {
+    document.getElementById('confirmMessage').textContent = message;
+    confirmModal.style.display = 'flex';
+
+    // Set the action when 'Yes' is clicked
+    modalYesBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+        actionCallback();
+    };
+
+    // Set the action when 'Cancel' is clicked
+    modalNoBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+    };
+}
+
+// Function to reset all markers and state
+function clearMarkersAndReset() {
+    markers = [];
+    scrubTargetTime = null;
+    video.pause();
+    // Initialize bounds and seek to midpoint
+    updateBoundsAndSeek(true);
+}
+
 
 // --- Helper to calculate time based on mouse x position ---
 function calculateTimeFromEvent(event) {
@@ -445,67 +608,62 @@ function handleTimelineScrub(event) {
 
     const targetTime = calculateTimeFromEvent(event);
     const currentTime = video.currentTime;
-    const delta = targetTime - currentTime; // Difference between target and current playback time
+    const delta = targetTime - currentTime;
 
-    current = targetTime; // Update indicator position immediately
+    current = targetTime;
 
-    // Check if the drag is strictly forward (delta > 0) AND within the 5-second window.
-    const isShortForwardDrag = (delta > 0 && delta <= 5);
+    // Play-to-Point Logic for short forward drags (less than SEEK_JUMP)
+    const isShortForwardDrag = (delta > 0 && delta <= SEEK_JUMP);
 
     if (isShortForwardDrag) {
-        // --- Play-to-Point Logic ---
-        scrubTargetTime = targetTime; // Set the stop point
+        scrubTargetTime = targetTime;
         if (video.paused) {
-            // Start playing only if it's currently paused
-            video.play();
+            video.play().catch(() => {});
         }
-        // No instant seek: let the video play naturally toward scrubTargetTime.
     } else {
-        // --- Instant Seek Logic (Backward drag, stationary, or long forward drag) ---
-        // This covers: delta <= 0 (backward/stationary) OR delta > 5 (long jump).
-        scrubTargetTime = null; // Clear any existing play-to-point target
+        // Instant Seek Logic (Backward drag, stationary, or long forward jump)
+        scrubTargetTime = null;
         if (!video.paused) {
-            video.pause(); // Explicitly pause if it was playing
+            video.pause();
         }
-        seekTo(targetTime); // Instant jump/seek to the mouse position
+        seekTo(targetTime);
     }
 }
 
 // --- File Drag and Drop & Input Setup ---
-function loadVideo(file) {
+async function loadVideo(file) {
     if(file && file.type.startsWith('video/')){
         const url = URL.createObjectURL(file);
         video.src = url;
 
-        video.addEventListener('loadedmetadata', () => {
-            videoAspect = video.videoWidth / video.videoHeight;
+        // 1. Wait for loadedmetadata event to get duration and dimensions
+        messageBox.textContent = "Loading video metadata...";
+        await new Promise(resolve => {
+            video.addEventListener('loadedmetadata', resolve, { once: true });
+        });
+
+        videoAspect = video.videoWidth / video.videoHeight;
+        resizeCanvas();
+
+        // 2. Set Static FPS and initialize bounds
+        videoFrameRate = 30; // Set static FPS
+        updateFrameRate(videoFrameRate); // Update the step time
+
+        // 3. Initialize binary search bounds and seek to the midpoint
+        clearMarkersAndReset();
+
+        // 4. Finalize UI and start search
+        controls.style.display = 'block';
+        splashScreen.style.opacity = 0;
+        setTimeout(() => {
+            splashScreen.style.display = 'none';
             resizeCanvas();
-
-            // Initialize binary search bounds
-            start = 0;
-            end = video.duration;
-            current = (start + end) / 2;
-            markers = [];
-            scrubTargetTime = null; // Reset scrub target
-
-            seekTo(current);
-            video.pause();
-
-            controls.style.display = 'block';
-            splashScreen.style.opacity = 0; // Fade out splash
-            setTimeout(() => {
-                splashScreen.style.display = 'none'; // Hide splash after fade
-                // Ensure canvas is resized once splash is removed
-                resizeCanvas();
-            }, 300);
-
-            messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
-        }, { once: true });
+        }, 300);
     }
 }
 
 function fileDropSetup(){
-    // Drag/Drop handling (on window for whole screen)
+    // Drag/Drop handling
     window.addEventListener('dragover', e => e.preventDefault());
     window.addEventListener('drop', e => {
         e.preventDefault();
@@ -524,6 +682,8 @@ function fileDropSetup(){
     });
 }
 
+// Set initial FPS value (30) and frame step on load
+updateFrameRate(videoFrameRate);
 fileDropSetup();
 
 // --- Event Listeners for Interaction ---
@@ -537,16 +697,14 @@ canvas.addEventListener('mousedown', (event) => {
     const isTimelineClick = y > (canvas.height - timelineHeight);
 
     if (isTimelineClick) {
-        // Timeline Mousedown: Start dragging
         isDraggingTimeline = true;
-        // Perform initial seek/play logic
         handleTimelineScrub(event);
         event.preventDefault();
     } else {
         // Video Area Click: Play/Pause Toggle
-        scrubTargetTime = null; // Clear any existing scrub targets
+        scrubTargetTime = null;
         if (video.paused || video.ended) {
-            video.play();
+            video.play().catch(() => {});
         } else {
             video.pause();
         }
@@ -564,7 +722,6 @@ canvas.addEventListener('mousemove', e => {
                            y < canvas.height;
 
     if (isDraggingTimeline) {
-        // Continuous scrubbing is active
         handleTimelineScrub(e);
     }
 
@@ -580,10 +737,9 @@ canvas.addEventListener('mousemove', e => {
     }
 });
 
-// MOUSE UP (Stops scrubbing) - Use window to catch releases outside the canvas
+// MOUSE UP (Stops scrubbing)
 window.addEventListener('mouseup', () => {
     if (isDraggingTimeline) {
-        // When dragging stops, perform a final pause and clear the target
         video.pause();
         scrubTargetTime = null;
     }
@@ -593,10 +749,20 @@ window.addEventListener('mouseup', () => {
 // Other button listeners
 yesBtn.addEventListener('click', () => binaryStep('yes'));
 noBtn.addEventListener('click', () => binaryStep('no'));
+undoBtn.addEventListener('click', undoBinaryStep); // New Undo listener
+
+// Clear Markers button listener
+clearBtn.addEventListener('click', () => {
+    showConfirmationModal(
+        'Are you sure you want to clear all binary search markers and restart the search?',
+        clearMarkersAndReset
+    );
+});
 
 // Save button functionality
 saveBtn.addEventListener('click', () => {
-    const timestamp = current.toFixed(2);
+    // Save timestamp with 3 decimal places for high precision
+    const timestamp = current.toFixed(3);
     const blob = new Blob([timestamp], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -613,11 +779,10 @@ canvas.addEventListener('mouseleave', () => {
 
 // --- Keyboard Interaction ---
 function handleKeyPress(e) {
-    // Ignore keypresses if no video is loaded OR if the splash screen is visible
     if (!video.duration || splashScreen.style.display !== 'none') return;
 
     // Prevent default actions for keys we handle (like space scrolling the page)
-    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.'].includes(e.key)) {
+    if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.', 'z'].includes(e.key.toLowerCase())) {
         e.preventDefault();
     }
 
@@ -630,37 +795,43 @@ function handleKeyPress(e) {
         video.pause();
     }
 
-    switch (e.key) {
+    switch (e.key.toLowerCase()) {
         case ' ': // Spacebar: Play/Pause
             if (video.paused || video.ended) {
-                video.play();
+                video.play().catch(() => {});
             } else {
                 video.pause();
             }
             break;
 
-        case 'ArrowRight': // Right Arrow: Seek forward 5s (Uses new large step)
+        case 'arrowright': // Right Arrow: Seek forward 5s
             seekTo(video.currentTime + SEEK_JUMP);
             break;
 
-        case 'ArrowLeft': // Left Arrow: Seek backward 5s (Uses new large step)
+        case 'arrowleft': // Left Arrow: Seek backward 5s
             seekTo(video.currentTime - SEEK_JUMP);
             break;
 
-        case '.': // '.' key: Frame forward
+        case '.': // '.' key: Frame forward (uses calculated SEEK_STEP_FRAME)
             seekTo(video.currentTime + SEEK_STEP_FRAME);
             break;
 
-        case ',': // ',' key: Frame backward
+        case ',': // ',' key: Frame backward (uses calculated SEEK_STEP_FRAME)
             seekTo(video.currentTime - SEEK_STEP_FRAME);
             break;
 
-        case 'ArrowDown': // Down Arrow: 'Yes' (Go Backwards)
+        case 'arrowdown': // Down Arrow: 'Yes' (Go Backwards)
             yesBtn.click();
             break;
 
-        case 'ArrowUp': // Up Arrow: 'No' (Go Forwards)
+        case 'arrowup': // Up Arrow: 'No' (Go Forwards)
             noBtn.click();
+            break;
+
+        case 'z': // Z key: Undo
+            if (e.ctrlKey || e.metaKey) { // Ctrl+Z or Cmd+Z
+                undoBinaryStep();
+            }
             break;
     }
     // Update 'current' state after seeking to ensure the indicator matches the video time immediately
