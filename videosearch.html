@@ -25,6 +25,7 @@
     justify-content:center;
     align-items:center;
     width:100%;
+    position: relative; /* Essential for positioning the splash screen over the canvas */
   }
   /* Canvas styling */
   canvas {
@@ -33,6 +34,85 @@
     cursor:pointer;
     border-radius: 8px; /* Rounded corners for modern look */
     box-shadow: 0 4px 12px rgba(0, 255, 255, 0.1); /* Subtle glow effect */
+    z-index: 10;
+  }
+  /* Splash screen overlay for instructions and file selection */
+  #splashScreen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(17, 17, 17, 0.95); /* Semi-transparent dark overlay */
+    color: white;
+    z-index: 20; /* Above canvas */
+    padding-bottom: 50px;
+    text-align: center;
+    border-radius: 8px;
+    opacity: 1;
+    transition: opacity 0.3s;
+  }
+  #splashScreen h2 {
+    color: #00bcd4;
+    font-size: 2em;
+    margin-bottom: 10px;
+  }
+  #splashScreen p {
+    font-size: 1.1em;
+    margin-bottom: 15px;
+    max-width: 80%;
+  }
+  .upload-btn {
+    background-color: #4CAF50;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border: none;
+    font-weight: bold;
+    font-size: 18px;
+    margin: 5px;
+  }
+  .upload-btn:hover {
+    background-color: #45a049;
+  }
+  .instructions-keybinds {
+    margin-top: 30px;
+    padding: 15px 30px;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  }
+  .instructions-keybinds h3 {
+    color: #00bcd4;
+    margin-bottom: 10px;
+    font-size: 1.2em;
+  }
+  .instructions-keybinds ul {
+    list-style: none;
+    padding: 0;
+    text-align: left;
+  }
+  .instructions-keybinds li {
+    margin: 8px 0;
+  }
+  .instructions-keybinds kbd {
+    background: #444;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid #555;
+    font-family: monospace;
+    font-size: 0.95em;
+    margin-right: 5px;
+    min-width: 25px;
+    display: inline-block;
+    text-align: center;
   }
   /* Controls section, initially hidden until a video is loaded */
   #controls {
@@ -90,11 +170,35 @@
 <div id="canvasContainer">
   <canvas id="canvas"></canvas>
   <div id="tooltip"></div>
+
+  <!-- Splash Screen with instructions and file selection -->
+  <div id="splashScreen">
+    <h2>Video Event Finder</h2>
+    <p>Use the <b>binary search</b> method to pinpoint the exact time of an event in your video.</p>
+    <p>Drag and drop a video file anywhere on the screen to begin.</p>
+
+    <p>- OR -</p>
+    <button id="selectFileBtn" class="upload-btn">Select Video File</button>
+    <!-- Hidden file input triggered by the button -->
+    <input type="file" id="fileInput" accept="video/*" style="display: none;">
+
+    <div class="instructions-keybinds">
+        <h3>Keyboard Controls:</h3>
+        <ul>
+            <li><kbd>Space</kbd>: Toggle Play/Pause</li>
+            <li><kbd>←</kbd> / <kbd>→</kbd>: Skip <b>5 seconds</b> (Back/Forward)</li>
+            <li><kbd>,</kbd> / <kbd>.</kbd> (<kbd>&lt;</kbd> / <kbd>&gt;</kbd>): Frame step (Back/Forward)</li>
+            <li><kbd>↑</kbd>: <b>No</b> (Go Forwards / Set new lower bound)</li>
+            <li><kbd>↓</kbd>: <b>Yes</b> (Go Backwards / Set new upper bound)</li>
+        </ul>
+    </div>
+  </div>
+
 </div>
 <div id="controls">
   <!-- Clarified instruction to reflect that 'Yes' sets the upper bound (earlier time) and 'No' sets the lower bound (later time) -->
   <p>Has the event you are searching for occurred **BEFORE or AT** this frame?</p>
-  <div id="messageBox">Drag and drop a video file here to begin.</div>
+  <div id="messageBox"></div>
   <button id="yesBtn">Yes (Go Backwards)</button>
   <button id="noBtn">No (Go Forwards)</button>
   <button id="saveBtn">Save Timestamp</button>
@@ -109,6 +213,11 @@ const noBtn = document.getElementById('noBtn');
 const saveBtn = document.getElementById('saveBtn');
 const tooltip = document.getElementById('tooltip');
 const messageBox = document.getElementById('messageBox');
+
+// New elements for file selection and instructions
+const fileInput = document.getElementById('fileInput');
+const selectFileBtn = document.getElementById('selectFileBtn');
+const splashScreen = document.getElementById('splashScreen');
 
 // --- Video Element Setup ---
 let video = document.createElement('video');
@@ -128,7 +237,7 @@ let isDraggingTimeline = false; // State for continuous scrubbing
 let scrubTargetTime = null; // The time the video should play to and then pause
 
 // --- Constants for Seeking ---
-const SEEK_STEP_SMALL = 0.1;      // For Arrow keys (100ms jump)
+const SEEK_JUMP = 5.0;            // Large step for Arrow keys (5 second jump)
 const SEEK_STEP_FRAME = 0.0333;   // Approximate 1/30th of a second for frame step
 
 // --- Time Formatting Utility ---
@@ -362,36 +471,56 @@ function handleTimelineScrub(event) {
     }
 }
 
-// --- File Drag and Drop Setup (Unchanged) ---
-function fileDropSetup(){
-    window.addEventListener('dragover', e => e.preventDefault());
+// --- File Drag and Drop & Input Setup ---
+function loadVideo(file) {
+    if(file && file.type.startsWith('video/')){
+        const url = URL.createObjectURL(file);
+        video.src = url;
 
+        video.addEventListener('loadedmetadata', () => {
+            videoAspect = video.videoWidth / video.videoHeight;
+            resizeCanvas();
+
+            // Initialize binary search bounds
+            start = 0;
+            end = video.duration;
+            current = (start + end) / 2;
+            markers = [];
+            scrubTargetTime = null; // Reset scrub target
+
+            seekTo(current);
+            video.pause();
+
+            controls.style.display = 'block';
+            splashScreen.style.opacity = 0; // Fade out splash
+            setTimeout(() => {
+                splashScreen.style.display = 'none'; // Hide splash after fade
+                // Ensure canvas is resized once splash is removed
+                resizeCanvas();
+            }, 300);
+
+            messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
+        }, { once: true });
+    }
+}
+
+function fileDropSetup(){
+    // Drag/Drop handling (on window for whole screen)
+    window.addEventListener('dragover', e => e.preventDefault());
     window.addEventListener('drop', e => {
         e.preventDefault();
-        const file = e.dataTransfer.files[0];
+        loadVideo(e.dataTransfer.files[0]);
+    });
 
-        if(file && file.type.startsWith('video/')){
-            const url = URL.createObjectURL(file);
-            video.src = url;
+    // Button click to trigger file input
+    selectFileBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
 
-            video.addEventListener('loadedmetadata', () => {
-                videoAspect = video.videoWidth / video.videoHeight;
-                resizeCanvas();
-
-                // Initialize binary search bounds
-                start = 0;
-                end = video.duration;
-                current = (start + end) / 2;
-                markers = [];
-                scrubTargetTime = null; // Reset scrub target
-
-                seekTo(current);
-                video.pause();
-
-                controls.style.display = 'block';
-                messageBox.textContent = `Current search range: ${formatTime(start)} to ${formatTime(end)}.`;
-            }, { once: true });
-        }
+    // File input change handling
+    fileInput.addEventListener('change', (e) => {
+        loadVideo(e.target.files[0]);
+        e.target.value = null; // Reset input so same file can be loaded again
     });
 }
 
@@ -484,7 +613,8 @@ canvas.addEventListener('mouseleave', () => {
 
 // --- Keyboard Interaction ---
 function handleKeyPress(e) {
-    if (!video.duration) return; // Ignore if no video is loaded
+    // Ignore keypresses if no video is loaded OR if the splash screen is visible
+    if (!video.duration || splashScreen.style.display !== 'none') return;
 
     // Prevent default actions for keys we handle (like space scrolling the page)
     if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ',', '.'].includes(e.key)) {
@@ -509,19 +639,19 @@ function handleKeyPress(e) {
             }
             break;
 
-        case 'ArrowRight': // Right Arrow: Seek forward 0.1s
-            seekTo(video.currentTime + SEEK_STEP_SMALL);
+        case 'ArrowRight': // Right Arrow: Seek forward 5s (Uses new large step)
+            seekTo(video.currentTime + SEEK_JUMP);
             break;
 
-        case 'ArrowLeft': // Left Arrow: Seek backward 0.1s
-            seekTo(video.currentTime - SEEK_STEP_SMALL);
+        case 'ArrowLeft': // Left Arrow: Seek backward 5s (Uses new large step)
+            seekTo(video.currentTime - SEEK_JUMP);
             break;
 
-        case '.': // '.' key: Frame forward (assuming 30fps)
+        case '.': // '.' key: Frame forward
             seekTo(video.currentTime + SEEK_STEP_FRAME);
             break;
 
-        case ',': // ',' key: Frame backward (assuming 30fps)
+        case ',': // ',' key: Frame backward
             seekTo(video.currentTime - SEEK_STEP_FRAME);
             break;
 
