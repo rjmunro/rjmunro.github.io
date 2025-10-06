@@ -433,9 +433,18 @@ function seekToNextFrame() {
     // 1. Define the callback function
     const callback = (now, metadata) => {
         // This runs when the next frame is rendered
-        video.pause();
         // Use mediaTime for the most precise frame timestamp
         const frameTime = metadata.mediaTime;
+        console.log(`rVFC callback at mediaTime: ${frameTime}`);
+
+        // If the frameTime is very close to current, we consider it the same frame
+        if (Math.abs(frameTime - current) < FRAME_EPSILON) {
+            // No frame advancement, do nothing
+            console.log("No frame advancement detected.");
+            video._rVFC_id = video.requestVideoFrameCallback(callback)
+            return;
+        }
+        video.pause();
 
         // Only push to history if it's a genuine frame-step forward
         if (frameTime > current) {
