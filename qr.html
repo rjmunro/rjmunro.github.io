@@ -41,7 +41,9 @@
     border-radius: 4px;
     background: #f5f5f5;
     white-space: nowrap;
+    flex-shrink: 0;
     align-self: center;
+    margin: 8px 0;
   }
   #download-btn:hover {
     background: #e0e0e0;
@@ -64,9 +66,9 @@
 <body>
   <div id="controls">
     <input id="text" type="text" placeholder="Enter text to encode as QR code…">
-    <button id="download-btn">Download SVG</button>
   </div>
   <div id="qr-container"></div>
+  <button id="download-btn">Download SVG</button>
 
   <script type="module">
     import QRCode from 'https://esm.sh/qrcode-svg@1.1.0';
