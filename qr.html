@@ -33,7 +33,7 @@
     border-radius: 4px;
     min-width: 0;
   }
-  #download-btn {
+  #download-svg-btn, #download-png-btn {
     padding: 8px 16px;
     font-size: 14px;
     cursor: pointer;
@@ -42,10 +42,8 @@
     background: #f5f5f5;
     white-space: nowrap;
     flex-shrink: 0;
-    align-self: center;
-    margin: 8px 0;
   }
-  #download-btn:hover {
+  #download-svg-btn:hover, #download-png-btn:hover {
     background: #e0e0e0;
   }
   #qr-container {
@@ -68,14 +66,18 @@
     <input id="text" type="text" placeholder="Enter text to encode as QR code…">
   </div>
   <div id="qr-container"></div>
-  <button id="download-btn">Download SVG</button>
+  <div style="display:flex;gap:8px;justify-content:center;flex-shrink:0;margin:8px 0;">
+    <button id="download-svg-btn">Download SVG</button>
+    <button id="download-png-btn">Download PNG</button>
+  </div>
 
   <script type="module">
     import QRCode from 'https://esm.sh/qrcode-svg@1.1.0';
 
     const textEl = document.getElementById('text');
     const container = document.getElementById('qr-container');
-    const downloadBtn = document.getElementById('download-btn');
+    const downloadSvgBtn = document.getElementById('download-svg-btn');
+    const downloadPngBtn = document.getElementById('download-png-btn');
 
     function updateQR() {
       const content = textEl.value;
@@ -122,6 +124,28 @@
       URL.revokeObjectURL(url);
     }
 
+    function downloadPNG() {
+      const svgData = container._svgString;
+      if (!svgData) return;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 1024, 1024);
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'qrcode.png';
+          a.click();
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+    }
+
     // Hidden span to measure text width accurately
     const measurer = document.createElement('span');
     measurer.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
@@ -157,7 +181,8 @@
       updateQR();
       history.replaceState(null, '', '#' + encodeURIComponent(textEl.value));
     });
-    downloadBtn.addEventListener('click', downloadSVG);
+    downloadSvgBtn.addEventListener('click', downloadSVG);
+    downloadPngBtn.addEventListener('click', downloadPNG);
 
     function loadFromHash() {
       if (location.hash.length > 1) {
