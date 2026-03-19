@@ -140,8 +140,18 @@
       textEl.style.fontSize = size + 'em';
     }
 
-    textEl.addEventListener('input', () => { autoSizeText(); updateQR(); });
+    textEl.addEventListener('input', () => {
+      autoSizeText();
+      updateQR();
+      history.replaceState(null, '', '#' + encodeURIComponent(textEl.value));
+    });
     downloadBtn.addEventListener('click', downloadSVG);
+
+    // Load text from hash on page load
+    if (location.hash.length > 1) {
+      textEl.value = decodeURIComponent(location.hash.slice(1));
+    }
+    autoSizeText();
     updateQR();
   </script>
 </body>
