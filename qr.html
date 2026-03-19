@@ -76,7 +76,12 @@
     const downloadBtn = document.getElementById('download-btn');
 
     function updateQR() {
-      const content = textEl.value || ' ';
+      const content = textEl.value;
+      if (!content) {
+        container.innerHTML = '';
+        container._svgString = null;
+        return;
+      }
       try {
         const qr = new QRCode({
           content: content,
@@ -147,12 +152,17 @@
     });
     downloadBtn.addEventListener('click', downloadSVG);
 
-    // Load text from hash on page load
-    if (location.hash.length > 1) {
-      textEl.value = decodeURIComponent(location.hash.slice(1));
+    function loadFromHash() {
+      if (location.hash.length > 1) {
+        textEl.value = decodeURIComponent(location.hash.slice(1));
+      }
+      autoSizeText();
+      updateQR();
     }
-    autoSizeText();
-    updateQR();
+
+    // Load text from hash on page load and when hash changes
+    window.addEventListener('hashchange', loadFromHash);
+    loadFromHash();
   </script>
 </body>
 </html>
