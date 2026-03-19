@@ -132,15 +132,20 @@
       measurer.style.fontFamily = style.fontFamily;
       measurer.style.fontWeight = style.fontWeight;
       measurer.style.letterSpacing = style.letterSpacing;
-      measurer.textContent = textEl.value || textEl.placeholder;
+      // Measure at max size first
+      measurer.style.fontSize = maxSize + 'em';
+      // Measure whichever is longer: value or placeholder
+      measurer.textContent = textEl.value;
+      const valueWidth = measurer.offsetWidth;
+      measurer.textContent = textEl.placeholder;
+      const placeholderWidth = measurer.offsetWidth;
+      const textWidth = Math.max(valueWidth, placeholderWidth);
 
       const availableWidth = textEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
 
-      // Measure at max size first
-      measurer.style.fontSize = maxSize + 'em';
       let size = maxSize;
-      if (measurer.offsetWidth > availableWidth && availableWidth > 0) {
-        size = Math.max(minSize, maxSize * availableWidth / measurer.offsetWidth);
+      if (textWidth > availableWidth && availableWidth > 0) {
+        size = Math.max(minSize, maxSize * availableWidth / textWidth);
       }
       textEl.style.fontSize = size + 'em';
     }
@@ -162,7 +167,8 @@
 
     // Load text from hash on page load and when hash changes
     window.addEventListener('hashchange', loadFromHash);
-    loadFromHash();
+    window.addEventListener('resize', autoSizeText);
+    requestAnimationFrame(loadFromHash);
   </script>
 </body>
 </html>
