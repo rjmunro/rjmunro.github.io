@@ -56,6 +56,40 @@
       background: #e0e0e0;
     }
 
+    #png-dialog {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 24px;
+      font-family: sans-serif;
+    }
+
+    #png-dialog::backdrop {
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    #png-dialog h3 {
+      margin: 0 0 16px;
+    }
+
+    #png-dialog .size-options {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #png-dialog .size-options button {
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f5f5f5;
+    }
+
+    #png-dialog .size-options button:hover {
+      background: #e0e0e0;
+    }
+
     #qr-container {
       flex: 1;
       display: flex;
@@ -82,6 +116,16 @@
     <button id="download-svg-btn">Download SVG</button>
     <button id="download-png-btn">Download PNG</button>
   </div>
+
+  <dialog id="png-dialog">
+    <h3>PNG pixel size per QR module</h3>
+    <div class="size-options">
+      <button data-scale="1">1px</button>
+      <button data-scale="2">2px</button>
+      <button data-scale="5">5px</button>
+      <button data-scale="10">10px</button>
+    </div>
+  </dialog>
 
   <script type="module">
     import QRCode from 'https://esm.sh/qrcode-svg@1.1.0';
@@ -136,27 +180,51 @@
       URL.revokeObjectURL(url);
     }
 
-    function downloadPNG() {
-      const svgData = container._svgString;
-      if (!svgData) return;
-      const img = new Image();
-      img.onload = () => {
+      function downloadPNG(scale) {
+        const content = textEl.value;
+        if (!content) return;
+        const padding = 2;
+        const qr = new QRCode({
+          content: content,
+          padding: padding,
+          ecl: 'M',
+        });
+        const modules = qr.qrcode.modules;
+        const moduleCount = modules.length;
+        const totalSize = (moduleCount + padding * 2) * scale;
         const canvas = document.createElement('canvas');
-        canvas.width = 1024;
-        canvas.height = 1024;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, 1024, 1024);
-        canvas.toBlob((blob) => {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'qrcode.png';
-          a.click();
-          URL.revokeObjectURL(url);
-        }, 'image/png');
-      };
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
+      canvas.width = totalSize;
+      canvas.height = totalSize;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, totalSize, totalSize);
+      ctx.fillStyle = '#000000';
+      const offset = padding * scale;
+      for (let row = 0; row < moduleCount; row++) {
+        for (let col = 0; col < moduleCount; col++) {
+          if (modules[row][col]) {
+            ctx.fillRect(offset + col * scale, offset + row * scale, scale, scale);
+          }
+        }
+      }
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'qrcode.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      }, 'image/png');
     }
+
+      const pngDialog = document.getElementById('png-dialog');
+      pngDialog.querySelectorAll('[data-scale]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const scale = parseInt(btn.dataset.scale, 10);
+          pngDialog.close();
+          downloadPNG(scale);
+        });
+      });
 
     // Hidden span to measure text width accurately
     const measurer = document.createElement('span');
@@ -194,7 +262,7 @@
       history.replaceState(null, '', '#' + encodeURIComponent(textEl.value));
     });
     downloadSvgBtn.addEventListener('click', downloadSVG);
-    downloadPngBtn.addEventListener('click', downloadPNG);
+      downloadPngBtn.addEventListener('click', () => pngDialog.showModal());
 
     function loadFromHash() {
       if (location.hash.length > 1) {
