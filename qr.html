@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Code Generator</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: sans-serif;
+      background: #fff;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #controls {
+      padding: 8px;
+      flex-shrink: 0;
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    #text {
+      flex: 1;
+      font-size: 3em;
+      padding: 4px 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      min-width: 0;
+    }
+
+    #download-svg-btn,
+    #download-png-btn {
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f5f5f5;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #download-svg-btn:hover,
+    #download-png-btn:hover {
+      background: #e0e0e0;
+    }
+
+    #png-dialog {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 24px;
+      font-family: sans-serif;
+    }
+
+    #png-dialog::backdrop {
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    #png-dialog h3 {
+      margin: 0 0 16px;
+    }
+
+    #png-dialog .size-options {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #png-dialog .size-options button {
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f5f5f5;
+    }
+
+    #png-dialog .size-options button:hover {
+      background: #e0e0e0;
+    }
+
+    #qr-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 8px;
+      min-height: 0;
+    }
+
+    #qr-container img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="controls">
+    <input id="text" type="text" placeholder="Enter text to encode as QR code…">
+  </div>
+  <div id="qr-container"></div>
+  <div style="display:flex;gap:8px;justify-content:center;flex-shrink:0;margin:8px 0;">
+    <button id="download-svg-btn">Download SVG</button>
+    <button id="download-png-btn">Download PNG</button>
+  </div>
+
+  <dialog id="png-dialog">
+    <h3>PNG pixel size per QR module</h3>
+    <div class="size-options">
+      <button data-scale="1">1px</button>
+      <button data-scale="2">2px</button>
+      <button data-scale="5">5px</button>
+      <button data-scale="10">10px</button>
+    </div>
+  </dialog>
+
+  <script type="module">
+    import QRCode from 'https://esm.sh/qrcode-svg@1.1.0';
+
+    const textEl = document.getElementById('text');
+    const container = document.getElementById('qr-container');
+    const downloadSvgBtn = document.getElementById('download-svg-btn');
+    const downloadPngBtn = document.getElementById('download-png-btn');
+
+    function updateQR() {
+      const content = textEl.value;
+      if (!content) {
+        container.innerHTML = '';
+        container._svgString = null;
+        return;
+      }
+      try {
+        const qr = new QRCode({
+          content: content,
+          padding: 2,
+          width: 1024,
+          height: 1024,
+          color: '#000000',
+          background: '#ffffff',
+          ecl: 'M',
+          join: true,
+          container: 'svg-viewbox',
+        });
+        const svgString = qr.svg();
+        const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+        const img = container.querySelector('img') || document.createElement('img');
+        img.src = dataUrl;
+        img.alt = 'QR Code';
+        img.draggable = true;
+        if (!img.parentNode) container.appendChild(img);
+        // Store raw SVG for download
+        container._svgString = svgString;
+      } catch {
+        container.innerHTML = '<p style="color:#999">Unable to generate QR code</p>';
+      }
+    }
+
+    function downloadSVG() {
+      const svgData = container._svgString;
+      if (!svgData) return;
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'qrcode.svg';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+      function downloadPNG(scale) {
+        const content = textEl.value;
+        if (!content) return;
+        const padding = 2;
+        const qr = new QRCode({
+          content: content,
+          padding: padding,
+          ecl: 'M',
+        });
+        const modules = qr.qrcode.modules;
+        const moduleCount = modules.length;
+        const totalSize = (moduleCount + padding * 2) * scale;
+        const canvas = document.createElement('canvas');
+      canvas.width = totalSize;
+      canvas.height = totalSize;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, totalSize, totalSize);
+      ctx.fillStyle = '#000000';
+      const offset = padding * scale;
+      for (let row = 0; row < moduleCount; row++) {
+        for (let col = 0; col < moduleCount; col++) {
+          if (modules[row][col]) {
+            ctx.fillRect(offset + col * scale, offset + row * scale, scale, scale);
+          }
+        }
+      }
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'qrcode.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+    }
+
+      const pngDialog = document.getElementById('png-dialog');
+      pngDialog.querySelectorAll('[data-scale]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const scale = parseInt(btn.dataset.scale, 10);
+          pngDialog.close();
+          downloadPNG(scale);
+        });
+      });
+
+    // Hidden span to measure text width accurately
+    const measurer = document.createElement('span');
+    measurer.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
+    document.body.appendChild(measurer);
+
+    function autoSizeText() {
+      const maxSize = 3; // em
+      const minSize = 1; // em
+      const style = getComputedStyle(textEl);
+      measurer.style.fontFamily = style.fontFamily;
+      measurer.style.fontWeight = style.fontWeight;
+      measurer.style.letterSpacing = style.letterSpacing;
+      // Measure at max size first
+      measurer.style.fontSize = maxSize + 'em';
+      // Measure whichever is longer: value or placeholder
+      measurer.textContent = textEl.value;
+      const valueWidth = measurer.offsetWidth;
+      measurer.textContent = textEl.placeholder;
+      const placeholderWidth = measurer.offsetWidth;
+      const textWidth = Math.max(valueWidth, placeholderWidth);
+
+      const availableWidth = textEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+
+      let size = maxSize;
+      if (textWidth > availableWidth && availableWidth > 0) {
+        size = Math.max(minSize, maxSize * availableWidth / textWidth);
+      }
+      textEl.style.fontSize = size + 'em';
+    }
+
+    textEl.addEventListener('input', () => {
+      autoSizeText();
+      updateQR();
+      history.replaceState(null, '', '#' + encodeURIComponent(textEl.value));
+    });
+    downloadSvgBtn.addEventListener('click', downloadSVG);
+      downloadPngBtn.addEventListener('click', () => pngDialog.showModal());
+
+    function loadFromHash() {
+      if (location.hash.length > 1) {
+        textEl.value = decodeURIComponent(location.hash.slice(1));
+      }
+      autoSizeText();
+      updateQR();
+    }
+
+    // Load text from hash on page load and when hash changes
+    window.addEventListener('hashchange', loadFromHash);
+    window.addEventListener('resize', autoSizeText);
+    requestAnimationFrame(loadFromHash);
+  </script>
+</body>
+
+</html>
